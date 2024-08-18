@@ -1,2 +1,1 @@
-# Hi, 
-we are building something like Google Docs but with different method and better! 
+# Hi, we are building something like Google Docs but with a different method and better! 
