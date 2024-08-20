@@ -13,7 +13,7 @@
 
 ## Phase 6: Let's build!
 
-## Phase 6: Cussing Devang for choosing this project(part 2).
+## Phase 7: Cussing Devang for choosing this project(part 2).
 
 ## Phase 8: Well, we built something!!
 
