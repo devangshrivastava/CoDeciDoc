@@ -9,11 +9,13 @@
 
 ## Phase 4: How will our application be different and work?
 
-## Phase5: Cussing Devang for choosing this project.
+## Phase5: Cussing Devang for choosing this project(part 1).
 
 ## Phase 6: Let's build!
 
-## Phase 7: Well, we built something!!
+## Phase 6: Cussing Devang for choosing this project(part 2).
 
-## Phase 8 : It's actually good!!!
+## Phase 8: Well, we built something!!
+
+## Phase 9: It's actually good!!!
 
