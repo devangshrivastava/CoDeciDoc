@@ -2,14 +2,14 @@
 
 ##Phase 1:Let's fucking goooooo!!!!!!
 
-## Phase 2: Understanding how Google Docs works
+##Phase 2: Understanding how Google Docs works
 [Operational Transformations as an Algorithm for Automatic Conflict Resolution](https://medium.com/coinmonks/operational-transformations-as-an-algorithm-for-automatic-conflict-resolution-3bf8920ea447)
 
-## Phase 3: What the hell is this??
+##Phase 3: What the hell is this??
 
 ## Phase 4: How will our application be different and work?
 
-##Phase 5: Cussing Devang for choosing this project.
+##Phase5: Cussing Devang for choosing this project.
 
 ## Phase 4: Let's build!
 
