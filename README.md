@@ -11,9 +11,9 @@
 
 ##Phase5: Cussing Devang for choosing this project.
 
-## Phase 4: Let's build!
+## Phase 6: Let's build!
 
-## Phase 6: Well, we built something!!
+## Phase 7: Well, we built something!!
 
-##Phase 7 : It's actually good!!!
+##Phase 8 : It's actually good!!!
 
