@@ -4,6 +4,7 @@
 
 ## Phase 2: Understanding how Google Docs works
 [Operational Transformations as an Algorithm for Automatic Conflict Resolution](https://medium.com/coinmonks/operational-transformations-as-an-algorithm-for-automatic-conflict-resolution-3bf8920ea447)
+https://www.youtube.com/watch?v=84zqbXUQIHc&t=2761s&pp=ygUab3BlcmF0aW9uYWwgdHJhbnNmb3JtYXRpb24%3D
 
 ## Phase 3: What the hell is this??
 
