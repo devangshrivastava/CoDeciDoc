@@ -1,0 +1,22 @@
+{
+  "name": "desktop-app",
+  "version": "1.0.0",
+  "description": "desktop application",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "electron .",
+    "dev:watch": "npx electromon --trace-warnings ."
+  },
+  "keywords": [
+    "electron",
+    "reactjs",
+    "typescript"
+  ],
+  "author": "anurag",
+  "license": "ISC",
+  "homepage": ".",
+  "dependencies": {
+    "electron": "^32.0.2"
+  }
+}
