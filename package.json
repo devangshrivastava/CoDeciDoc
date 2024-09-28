@@ -15,7 +15,7 @@
   ],
   "author": "anurag",
   "license": "ISC",
-  "homepage": ".",
+  "homepage": "http://.",
   "dependencies": {
     "@emotion/react": "^11.13.3",
     "@emotion/styled": "^11.13.0",
