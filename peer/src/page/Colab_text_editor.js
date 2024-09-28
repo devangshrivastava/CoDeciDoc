@@ -6,11 +6,7 @@ import * as Y from 'yjs';
 import { QuillBinding } from 'y-quill';
 import { WebrtcProvider } from 'y-webrtc';
 import QuillCursors from 'quill-cursors';
-
-import { v1 as uuidv1 } from 'uuid';
-import { useNavigate, useLocation } from 'react-router-dom';
-
-// Importing CodeMirror 6 packages
+import { useLocation } from 'react-router-dom';
 import { EditorView, basicSetup } from '@codemirror/basic-setup';
 import { javascript } from '@codemirror/lang-javascript';
 import { cpp } from '@codemirror/lang-cpp';
@@ -18,13 +14,10 @@ import { python } from '@codemirror/lang-python';
 import { yCollab } from 'y-codemirror.next'; // Yjs integration for CodeMirror 6
 
 function App() {
-  const navigate = useNavigate();
+ 
   const location = useLocation(); // Use the useLocation hook to access location
 
-  function new_editor() {
-    let new_id = uuidv1();
-    navigate("/" + new_id);
-  }
+  
 
   const ID = location.pathname; // Access pathname directly from location
   const State = location.state;
@@ -108,14 +101,11 @@ function App() {
 
   return (
     <div>
-      <div>
-        <h1>Hello Welcome To Collaborative Text Editor</h1>
-        <button onClick={new_editor}>Create New Collaborative Document</button>
-      </div>
+      
 
       <div>
         <button onClick={showTextEditor}>Text Editor</button>
-        <button onClick={showCodeEditor}>Code Editor</button>
+        {/* <button onClick={showCodeEditor}>Code Editor</button> */}
       </div>
 
       {editorMode === 'text' && (
