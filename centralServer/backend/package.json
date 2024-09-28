@@ -11,7 +11,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "eslint": "^9.11.1",
+    "express": "^4.21.0",
     "lib0": "^0.2.98",
     "ws": "^8.18.0"
   },

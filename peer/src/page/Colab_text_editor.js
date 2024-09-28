@@ -11,29 +11,151 @@ import { EditorView, basicSetup } from '@codemirror/basic-setup';
 import { javascript } from '@codemirror/lang-javascript';
 import { cpp } from '@codemirror/lang-cpp';
 import { python } from '@codemirror/lang-python';
-import { yCollab } from 'y-codemirror.next'; // Yjs integration for CodeMirror 6
+import { yCollab } from 'y-codemirror.next';
+
+const signalingServerUrl = process.env.REACT_APP_SIGNALING_SERVER_URL || 'ws://localhost:4444';
 
 function App() {
- 
-  const location = useLocation(); // Use the useLocation hook to access location
-
-  
-
-  const ID = location.pathname; // Access pathname directly from location
-  const State = location.state;
-
+  const location = useLocation();
+  const ID = location.pathname;
   const cppEditorRef = useRef(null);
   const jsEditorRef = useRef(null);
   const pythonEditorRef = useRef(null);
-  const [editorMode, setEditorMode] = useState('text'); // Manage state for editor mode (text/code)
+  const [editorMode, setEditorMode] = useState('text');
   const [quill, setQuill] = useState(null);
+  const [peerConnection, setPeerConnection] = useState(null);
+  const [signalingServer, setSignalingServer] = useState(null);
+
+  const reconnectInterval = 5000;
 
   const showTextEditor = () => setEditorMode('text');
-  const showCodeEditor = () => setEditorMode('code');
-
   const setCPP = () => setEditorMode('cpp');
   const setJS = () => setEditorMode('js');
   const setPython = () => setEditorMode('python');
+
+  const connectToSignalingServer = () => {
+    const signaling = new WebSocket(signalingServerUrl);
+    setSignalingServer(signaling);
+
+    signaling.onopen = () => {
+      console.log('Connected to signaling server');
+    };
+
+    signaling.onmessage = (message) => {
+      const data = JSON.parse(message.data);
+      handleSignalingMessage(data);
+    };
+
+    signaling.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    signaling.onclose = () => {
+      console.log('Disconnected from signaling server');
+      setTimeout(() => {
+        console.log('Attempting to reconnect to signaling server...');
+        connectToSignalingServer();
+      }, reconnectInterval);
+    };
+  };
+
+  useEffect(() => {
+    connectToSignalingServer();
+
+    return () => {
+      if (signalingServer) {
+        signalingServer.close();
+      }
+    };
+  }, []);
+
+  const handleSignalingMessage = (data) => {
+    if (data.type === 'offer') {
+      peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+      createAnswer(data.senderId);
+    } else if (data.type === 'answer') {
+      peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+    } else if (data.type === 'candidate') {
+      peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+    }
+  };
+
+  const createPeerConnection = (peerId) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+        {
+          urls: 'turn:numb.viagenie.ca',
+          credential: 'muazkh',
+          username: 'webrtc@live.com'
+        },
+      ],
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        signalingServer.send(
+          JSON.stringify({
+            type: 'candidate',
+            candidate: event.candidate,
+            receiverId: peerId,
+          })
+        );
+      }
+    };
+
+    pc.ontrack = (event) => {
+      // Handle incoming track
+    };
+
+    pc.onerror = (error) => {
+      console.error('PeerConnection error:', error);
+    };
+
+    setPeerConnection(pc);
+    return pc;
+  };
+
+  const createOffer = (peerId) => {
+    const pc = createPeerConnection(peerId);
+    pc.createOffer()
+      .then((offer) => {
+        return pc.setLocalDescription(offer);
+      })
+      .then(() => {
+        signalingServer.send(
+          JSON.stringify({
+            type: 'offer',
+            offer: pc.localDescription,
+            senderId: ID,
+            receiverId: peerId,
+          })
+        );
+      })
+      .catch((error) => {
+        console.error('Error creating offer:', error);
+      });
+  };
+
+  const createAnswer = (peerId) => {
+    peerConnection.createAnswer()
+      .then((answer) => {
+        return peerConnection.setLocalDescription(answer);
+      })
+      .then(() => {
+        signalingServer.send(
+          JSON.stringify({
+            type: 'answer',
+            answer: peerConnection.localDescription,
+            senderId: ID,
+            receiverId: peerId,
+          })
+        );
+      })
+      .catch((error) => {
+        console.error('Error creating answer:', error);
+      });
+  };
 
   useEffect(() => {
     Quill.register('modules/cursors', QuillCursors);
@@ -44,30 +166,39 @@ function App() {
           toolbar: [
             [{ header: [1, 2, false] }],
             ['bold', 'italic', 'underline'],
-            ['image', 'code-block']
+            ['image', 'code-block'],
           ],
           history: {
-            userOnly: true
-          }
+            userOnly: true,
+          },
         },
         placeholder: 'Start collaborating...',
-        theme: 'snow'
+        theme: 'snow',
       });
       setQuill(editor);
     }
 
     if (quill) {
       const ydoc = new Y.Doc();
-      const provider = new WebrtcProvider(`${ID}TEXT`, ydoc);
+      const provider = new WebrtcProvider(`${ID}TEXT`, ydoc, {
+        signaling: [signalingServerUrl],
+      });
       const ytext = ydoc.getText('quill');
       new QuillBinding(ytext, quill, provider.awareness);
+
+      return () => {
+        provider.disconnect();
+        ydoc.destroy();
+      };
     }
-  }, [quill]);
+  }, [quill, ID]);
 
   useEffect(() => {
     const setupEditor = (element, language, yTextId) => {
       const ydoc = new Y.Doc();
-      const provider = new WebrtcProvider(`${ID}${yTextId}`, ydoc);
+      const provider = new WebrtcProvider(`${ID}${yTextId}`, ydoc, {
+        signaling: [signalingServerUrl],
+      });
       const ytext = ydoc.getText(yTextId);
 
       const view = new EditorView({
@@ -84,28 +215,38 @@ function App() {
         const editorState = view.state.doc.toString();
         ytext.applyUpdate(update);
       });
+
+      return () => {
+        provider.disconnect();
+        ydoc.destroy();
+        view.destroy();
+      };
     };
 
+    let cleanup;
+
     if (cppEditorRef.current && editorMode === 'cpp') {
-      setupEditor(cppEditorRef.current, cpp(), 'CODE_CPP');
+      cleanup = setupEditor(cppEditorRef.current, cpp(), 'CODE_CPP');
     }
 
     if (jsEditorRef.current && editorMode === 'js') {
-      setupEditor(jsEditorRef.current, javascript(), 'CODE_JS');
+      cleanup = setupEditor(jsEditorRef.current, javascript(), 'CODE_JS');
     }
 
     if (pythonEditorRef.current && editorMode === 'python') {
-      setupEditor(pythonEditorRef.current, python(), 'CODE_PYTHON');
+      cleanup = setupEditor(pythonEditorRef.current, python(), 'CODE_PYTHON');
     }
-  }, [editorMode]);
+
+    return cleanup;
+  }, [editorMode, ID]);
 
   return (
     <div>
-      
-
       <div>
         <button onClick={showTextEditor}>Text Editor</button>
-        {/* <button onClick={showCodeEditor}>Code Editor</button> */}
+        <button onClick={setCPP}>C++</button>
+        <button onClick={setJS}>JavaScript</button>
+        <button onClick={setPython}>Python</button>
       </div>
 
       {editorMode === 'text' && (
@@ -114,31 +255,24 @@ function App() {
         </div>
       )}
 
-      {editorMode === 'code' && (
-        <div id="code_editor">
-          <div>
-            <button onClick={setCPP}>C++</button>
-            <button onClick={setJS}>JavaScript</button>
-            <button onClick={setPython}>Python</button>
-          </div>
-          {editorMode === 'cpp' && (
-            <div id="cpp_editor">
-              <h1>Mode: C++</h1>
-              <div ref={cppEditorRef} />
-            </div>
-          )}
-          {editorMode === 'js' && (
-            <div id="javascript_editor">
-              <h1>Mode: JavaScript</h1>
-              <div ref={jsEditorRef} />
-            </div>
-          )}
-          {editorMode === 'python' && (
-            <div id="python_editor">
-              <h1>Mode: Python</h1>
-              <div ref={pythonEditorRef} />
-            </div>
-          )}
+      {editorMode === 'cpp' && (
+        <div id="cpp_editor">
+          <h1>Mode: C++</h1>
+          <div ref={cppEditorRef} />
+        </div>
+      )}
+
+      {editorMode === 'js' && (
+        <div id="javascript_editor">
+          <h1>Mode: JavaScript</h1>
+          <div ref={jsEditorRef} />
+        </div>
+      )}
+
+      {editorMode === 'python' && (
+        <div id="python_editor">
+          <h1>Mode: Python</h1>
+          <div ref={pythonEditorRef} />
         </div>
       )}
     </div>
