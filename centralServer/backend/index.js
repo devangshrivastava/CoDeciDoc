@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const ws = require('ws');
 const http = require('http');
-const map = require('lib0/dist/map.cjs');
 require('dotenv').config();
 
 const wsReadyStateConnecting = 0;
@@ -20,6 +19,8 @@ const server = http.createServer(app);
 const wss = new ws.Server({ noServer: true });
 
 const clients = new Map();
+const pendingSDPs = new Map();
+const pendingCandidates = new Map();
 
 const send = (conn, message) => {
   if (conn.readyState !== wsReadyStateConnecting && conn.readyState !== wsReadyStateOpen) {
@@ -35,12 +36,11 @@ const send = (conn, message) => {
 };
 
 const onconnection = (conn) => {
-  const clientId = `client_${Math.random().toString(36).substring(2, 15)}`;
-  clients.set(clientId, conn);
-  console.log(`Client connected with ID: ${clientId}`);
-
+  let clientId = null;
   let closed = false;
   let pongReceived = true;
+
+  // Ping mechanism to check for connection health
   const pingInterval = setInterval(() => {
     if (!pongReceived) {
       console.log(`Pong not received from ${clientId}, closing connection`);
@@ -58,13 +58,14 @@ const onconnection = (conn) => {
   }, pingTimeout);
 
   conn.on('pong', () => {
-    console.log(`Pong received from client: ${clientId}`);
     pongReceived = true;
   });
 
   conn.on('close', () => {
     console.log(`Client ${clientId} disconnected`);
-    clients.delete(clientId);
+    if (clientId && clients.has(clientId)) {
+      clients.delete(clientId);
+    }
     closed = true;
     clearInterval(pingInterval);
   });
@@ -73,24 +74,82 @@ const onconnection = (conn) => {
     try {
       if (typeof message === 'string') {
         message = JSON.parse(message);
+      } else if (message instanceof Buffer) {
+        message = JSON.parse(message.toString());
       }
+
       if (message && message.type && !closed) {
-        console.log(`Received message from client ${clientId}:`, message);
+        console.log(`Received message from client ${clientId || 'unregistered'}:`, message);
+
         switch (message.type) {
-          case 'offer':
-          case 'answer':
-          case 'candidate':
-            const receiverConn = clients.get(message.receiverId);
-            if (receiverConn) {
-              send(receiverConn, { ...message, senderId: clientId });
-              console.log(`Forwarded ${message.type} from ${clientId} to ${message.receiverId}`);
-            } else {
-              console.log(`Receiver ${message.receiverId} not connected`);
+          case 'register':
+            clientId = message.userId;
+            clients.set(clientId, conn);
+            console.log(`Client registered with ID: ${clientId}`);
+            
+            // Send registration confirmation
+            send(conn, { type: 'registerSuccess', userId: clientId });
+
+            // Send any pending SDPs and ICE candidates to this client
+            if (pendingSDPs.has(clientId)) {
+              const pendingMessages = pendingSDPs.get(clientId);
+              for (const pendingMessage of pendingMessages) {
+                send(conn, pendingMessage);
+              }
+              pendingSDPs.delete(clientId);
+            }
+
+            if (pendingCandidates.has(clientId)) {
+              const pendingMessages = pendingCandidates.get(clientId);
+              for (const pendingMessage of pendingMessages) {
+                send(conn, pendingMessage);
+              }
+              pendingCandidates.delete(clientId);
             }
             break;
-          case 'ping':
-            send(conn, { type: 'pong' });
+
+          case 'offer':
+            console.log(`Received SDP offer from ${clientId} to ${message.receiverId}`);
+            const receiverConnOffer = clients.get(message.receiverId);
+            if (receiverConnOffer) {
+              send(receiverConnOffer, { ...message, senderId: clientId });
+            } else {
+              console.log(`Receiver ${message.receiverId} not connected for offer. Storing offer.`);
+              if (!pendingSDPs.has(message.receiverId)) {
+                pendingSDPs.set(message.receiverId, []);
+              }
+              pendingSDPs.get(message.receiverId).push({ ...message, senderId: clientId });
+            }
             break;
+
+          case 'answer':
+            console.log(`Received SDP answer from ${clientId} to ${message.receiverId}`);
+            const receiverConnAnswer = clients.get(message.receiverId);
+            if (receiverConnAnswer) {
+              send(receiverConnAnswer, { ...message, senderId: clientId });
+            } else {
+              console.log(`Receiver ${message.receiverId} not connected for answer. Storing answer.`);
+              if (!pendingSDPs.has(message.receiverId)) {
+                pendingSDPs.set(message.receiverId, []);
+              }
+              pendingSDPs.get(message.receiverId).push({ ...message, senderId: clientId });
+            }
+            break;
+
+          case 'candidate':
+            console.log(`Received ICE candidate from ${clientId} to ${message.receiverId}`);
+            const receiverConnCandidate = clients.get(message.receiverId);
+            if (receiverConnCandidate) {
+              send(receiverConnCandidate, { ...message, senderId: clientId });
+            } else {
+              console.log(`Receiver ${message.receiverId} not connected for ICE candidate. Storing candidate.`);
+              if (!pendingCandidates.has(message.receiverId)) {
+                pendingCandidates.set(message.receiverId, []);
+              }
+              pendingCandidates.get(message.receiverId).push({ ...message, senderId: clientId });
+            }
+            break;
+
           default:
             console.log(`Unknown message type from ${clientId}:`, message.type);
         }
@@ -102,45 +161,18 @@ const onconnection = (conn) => {
 };
 
 wss.on('connection', (ws, req) => {
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-  });
+  console.log('New WebSocket connection established');
+  ws.on('error', (error) => console.error('WebSocket error:', error));
   onconnection(ws);
 });
 
 server.on('upgrade', (request, socket, head) => {
   console.log('Upgrade request received');
   wss.handleUpgrade(request, socket, head, (ws) => {
-    console.log('WebSocket connection established');
     wss.emit('connection', ws, request);
   });
 });
 
 server.listen(port, host, () => {
   console.log(`Signaling server running on ${host}:${port}`);
-});
-
-// Periodic check to ensure connections are still alive
-const interval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping(() => {});
-  });
-}, 30000);
-
-wss.on('connection', (ws) => {
-  ws.isAlive = true;
-  ws.on('pong', () => {
-    ws.isAlive = true;
-  });
-});
-
-// Error handling
-wss.on('error', (error) => {
-  console.error('WebSocket server error:', error);
-});
-
-server.on('error', (error) => {
-  console.error('HTTP server error:', error);
 });
