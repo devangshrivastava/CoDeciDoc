@@ -1,280 +1,178 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Quill from 'quill';
-import * as Y from 'yjs';
-import { QuillBinding } from 'y-quill';
-import { WebrtcProvider } from 'y-webrtc';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
-const signalingServerUrl = process.env.REACT_APP_SIGNALING_SERVER_URL || 'ws://localhost:4444';
+function App() {
+    const [userId, setUserId] = useState(uuidv4());
+    const [peerId, setPeerId] = useState('');
+    const [connectionStatus, setConnectionStatus] = useState('Disconnected');
+    const [callInitiated, setCallInitiated] = useState(false);
+    const [message, setMessage] = useState('');
+    const [chatMessages, setChatMessages] = useState([]);
+    const peerConnectionRef = useRef(null);
+    const ws = useRef(null);
+    const dataChannelRef = useRef(null);
 
-function ColabTextEditor() {
-  const [userId, setUserId] = useState('');
-  const [peerId, setPeerId] = useState('');
-  const [status, setStatus] = useState('Unregistered');
-  const [connectionStatus, setConnectionStatus] = useState(null);
-  const [detailedStatus, setDetailedStatus] = useState('');
-  const peerConnectionRef = useRef(null);
-  const signalingServer = useRef(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [isOfferSent, setIsOfferSent] = useState(false);
+    const connectWebSocket = useCallback(() => {
+        ws.current = new WebSocket('ws://localhost:4444');
+        ws.current.onopen = () => {
+            console.log('WebSocket connected');
+            ws.current.send(JSON.stringify({ type: 'register', userId }));
+        };
+        ws.current.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            console.log('WebSocket message received:', message);
+            switch (message.type) {
+                case 'registerSuccess':
+                    console.log(`Registration successful: ${message.userId}`);
+                    setConnectionStatus('Registered');
+                    break;
+                case 'offer':
+                    console.log(`Offer received from ${message.senderId}`);
+                    handleOffer(message);
+                    setCallInitiated(true);
+                    break;
+                case 'answer':
+                    console.log(`Answer received from ${message.senderId}`);
+                    handleAnswer(message);
+                    setCallInitiated(true);
+                    break;
+                case 'candidate':
+                    console.log(`ICE candidate received from ${message.senderId}`);
+                    handleCandidate(message);
+                    break;
+                default:
+                    console.log('Unknown message type:', message.type);
+            }
+        };
+        ws.current.onclose = () => {
+            console.log('WebSocket disconnected');
+        };
+        ws.current.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+    }, [userId]);
 
-  const createPeerConnection = useCallback((peerId) => {
-    if (peerConnectionRef.current) {
-      console.log('Peer connection already exists.');
-      return peerConnectionRef.current;
-    }
-
-    console.log('Creating peer connection');
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }],
-    });
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('Sending ICE candidate:', event.candidate);
-        sendMessage({
-          type: 'candidate',
-          candidate: event.candidate,
-          senderId: userId,
-          receiverId: peerId,
+    const createPeerConnection = useCallback(() => {
+        console.log('Creating peer connection');
+        const pc = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         });
-      }
+        pc.onicecandidate = ({ candidate }) => {
+            if (candidate) {
+                console.log('Sending ICE candidate:', candidate);
+                ws.current.send(JSON.stringify({ type: 'candidate', candidate, senderId: userId, receiverId: peerId }));
+            }
+        };
+        pc.oniceconnectionstatechange = () => {
+            console.log('ICE connection state change:', pc.iceConnectionState);
+            setConnectionStatus(pc.iceConnectionState);
+        };
+        pc.onconnectionstatechange = () => {
+            console.log('Connection state change:', pc.connectionState);
+        };
+        // Create data channel for chat messages
+        dataChannelRef.current = pc.createDataChannel("chatChannel");
+        setupDataChannelEvents();
+        peerConnectionRef.current = pc;
+        return pc;
+    }, [peerId, userId]);
+
+    const setupDataChannelEvents = () => {
+        dataChannelRef.current.onopen = () => {
+            console.log('Data channel is open');
+        };
+        dataChannelRef.current.onmessage = (event) => {
+            const data = event.data;
+            console.log('Received message on data channel:', data);
+            setChatMessages(messages => [...messages, { id: uuidv4(), text: data }]);
+        };
+        dataChannelRef.current.onclose = () => {
+            console.log('Data channel is closed');
+        };
+        dataChannelRef.current.onerror = (error) => {
+            console.error('Data channel error:', error);
+        };
     };
 
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE connection state changed:', pc.iceConnectionState);
-      setConnectionStatus(pc.iceConnectionState);
-      if (pc.iceConnectionState === 'connected') {
-        setIsConnected(true);
-        setDetailedStatus('Peer connection established');
-      }
-    };
+    const handleOffer = useCallback(({ offer, senderId }) => {
+        const pc = createPeerConnection();
+        pc.ondatachannel = (event) => {
+            dataChannelRef.current = event.channel;
+            setupDataChannelEvents();
+        };
+        pc.setRemoteDescription(new RTCSessionDescription(offer)).then(() => {
+            console.log('Remote description set with offer');
+            return pc.createAnswer();
+        }).then(answer => {
+            console.log('Answer created:', answer);
+            pc.setLocalDescription(answer);
+            ws.current.send(JSON.stringify({ type: 'answer', answer, senderId: userId, receiverId: senderId }));
+        }).catch(console.error);
+    }, [createPeerConnection, userId]);
 
-    pc.onconnectionstatechange = () => {
-      console.log('Connection state changed:', pc.connectionState);
-      setConnectionStatus(pc.connectionState);
-      if (pc.connectionState === 'connected') {
-        setIsConnected(true);
-        setDetailedStatus('Peer connection established');
-      } else if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
-        setIsConnected(false);
-        setDetailedStatus(`Connection ${pc.connectionState}`);
-      }
-    };
+    const handleAnswer = useCallback(({ answer }) => {
+        const pc = peerConnectionRef.current;
+        console.log('Setting remote description with answer');
+        pc.setRemoteDescription(new RTCSessionDescription(answer)).catch(console.error);
+    }, []);
 
-    peerConnectionRef.current = pc;
-    return pc;
-  }, [userId]);
+    const handleCandidate = useCallback(({ candidate }) => {
+        const pc = peerConnectionRef.current;
+        console.log('Adding ICE candidate');
+        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+    }, []);
 
-  const sendMessage = useCallback((message) => {
-    if (signalingServer.current?.readyState === WebSocket.OPEN) {
-      signalingServer.current.send(JSON.stringify(message));
-      console.log('Sent message:', message);
-    } else {
-      console.log('WebSocket not open. Message not sent:', message);
-    }
-  }, []);
+    const callPeer = useCallback(() => {
+        const pc = createPeerConnection();
+        console.log('Creating offer');
+        pc.createOffer().then(offer => {
+            console.log('Offer created:', offer);
+            pc.setLocalDescription(offer);
+            ws.current.send(JSON.stringify({ type: 'offer', offer, senderId: userId, receiverId: peerId }));
+        }).catch(console.error);
+        setCallInitiated(true);
+    }, [createPeerConnection, userId, peerId]);
 
-  const handleOffer = async (data) => {
-    console.log('Received offer from peer:', data.senderId);
-    setDetailedStatus('Received offer. Creating answer...');
-    const pc = createPeerConnection(data.senderId);
-    try {
-      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-      console.log('Set remote description with offer');
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      console.log('Created and set local description with answer');
-      sendMessage({
-        type: 'answer',
-        answer: pc.localDescription,
-        senderId: userId,
-        receiverId: data.senderId,
-      });
-      setDetailedStatus('Answer sent. Waiting for connection...');
-    } catch (error) {
-      console.error('Error handling offer:', error);
-      setDetailedStatus('Error handling offer');
-    }
-  };
+    const sendMessage = useCallback(() => {
+        if (dataChannelRef.current && dataChannelRef.current.readyState === "open") {
+            console.log('Sending message:', message);
+            dataChannelRef.current.send(message);
+            setChatMessages(messages => [...messages, { id: uuidv4(), text: message, own: true }]);
+            setMessage('');
+        }
+    }, [message]);
 
-  const handleAnswer = async (data) => {
-    console.log('Received answer from peer:', data.senderId);
-    try {
-      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-      console.log('Set remote description with answer');
-      setDetailedStatus('Answer received. Establishing connection...');
-    } catch (error) {
-      console.error('Error setting remote description:', error);
-      setDetailedStatus('Error handling answer');
-    }
-  };
+    useEffect(() => {
+        connectWebSocket();
+        return () => {
+            console.log('Cleaning up WebSocket and peer connection');
+            peerConnectionRef.current?.close();
+            ws.current?.close();
+        };
+    }, [connectWebSocket]);
 
-  const handleCandidate = async (data) => {
-    console.log('Received ICE candidate from peer:', data.senderId);
-    try {
-      await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-      console.log('Added ICE candidate');
-    } catch (error) {
-      console.error('Error adding ICE candidate:', error);
-    }
-  };
-
-  const createOffer = async () => {
-    const pc = createPeerConnection(peerId);
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      console.log('Created and set local description with offer');
-      sendMessage({
-        type: 'offer',
-        offer: pc.localDescription,
-        senderId: userId,
-        receiverId: peerId,
-      });
-      setIsOfferSent(true);
-      setDetailedStatus('Offer sent. Waiting for answer...');
-    } catch (error) {
-      console.error('Error creating offer:', error);
-      setDetailedStatus('Error creating offer');
-    }
-  };
-
-  const connectToSignalingServer = useCallback(() => {
-    signalingServer.current = new WebSocket(signalingServerUrl);
-
-    signalingServer.current.onopen = () => {
-      console.log('Connected to signaling server');
-      setStatus('Connecting...');
-      signalingServer.current.send(JSON.stringify({ type: 'register', userId }));
-    };
-
-    signalingServer.current.onmessage = async (message) => {
-      const data = JSON.parse(message.data);
-      console.log('Received message:', data);
-      switch (data.type) {
-        case 'registerSuccess':
-          setStatus(`Registered as ${data.userId}`);
-          setDetailedStatus('Registered with signaling server');
-          break;
-        case 'offer':
-          await handleOffer(data);
-          break;
-        case 'answer':
-          await handleAnswer(data);
-          break;
-        case 'candidate':
-          await handleCandidate(data);
-          break;
-      }
-    };
-
-    signalingServer.current.onclose = () => {
-      console.log('Disconnected from signaling server');
-      setStatus('Unregistered');
-      setConnectionStatus(null);
-      setIsConnected(false);
-      setDetailedStatus('Disconnected from signaling server');
-    };
-
-    signalingServer.current.onerror = (error) => {
-      console.error('Signaling server error:', error);
-      setDetailedStatus('Signaling server error');
-    };
-  }, [userId, handleOffer, handleAnswer, handleCandidate]);
-
-  const handleRegister = useCallback(() => {
-    if (userId.trim() === '') {
-      alert('Please enter a valid User ID.');
-      return;
-    }
-    connectToSignalingServer();
-  }, [userId, connectToSignalingServer]);
-
-  const handleConnect = useCallback(() => {
-    if (peerId.trim() === '' || userId === peerId) {
-      alert('Please enter a valid Peer ID different from your User ID.');
-      return;
-    }
-    createOffer();
-  }, [peerId, userId, createOffer]);
-
-  const shouldInitiate = useCallback(() => {
-    return userId < peerId;
-  }, [userId, peerId]);
-
-  useEffect(() => {
-    return () => {
-      peerConnectionRef.current?.close();
-      signalingServer.current?.close();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (peerConnectionRef.current && isConnected) {
-      console.log('Initializing collaborative text editor.');
-      const ydoc = new Y.Doc();
-      const provider = new WebrtcProvider(peerId, ydoc, { 
-        signaling: [signalingServerUrl],
-        password: 'optional-room-password',
-      });
-      const ytext = ydoc.getText('quill');
-      const quill = new Quill('#editor', {
-        theme: 'snow'
-      });
-      const binding = new QuillBinding(ytext, quill, provider.awareness);
-      
-      console.log('Integrated Yjs and Quill for collaborative editing.');
-      
-      return () => {
-        provider.destroy();
-        ydoc.destroy();
-        binding.destroy();
-        quill.disable();
-      };
-    }
-  }, [isConnected, peerId]);
-
-  return (
-    <div>
-      <h1>Status: <span style={{ color: status === 'Unregistered' ? 'red' : 'green' }}>{status}</span></h1>
-      {connectionStatus && <h2>Connection Status: {connectionStatus}</h2>}
-      <h3>Detailed Status: {detailedStatus}</h3>
-      <div>
-        <label>User ID: </label>
-        <input
-          type="text"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          placeholder="Enter your User ID"
-        />
-        <button onClick={handleRegister} disabled={status !== 'Unregistered'}>
-          Register
-        </button>
-      </div>
-      <div>
-        <label>Peer ID: </label>
-        <input
-          type="text"
-          value={peerId}
-          onChange={(e) => setPeerId(e.target.value)}
-          placeholder="Enter Peer ID to connect"
-        />
-        <button onClick={handleConnect} disabled={status === 'Unregistered' || isConnected}>
-          Connect to Peer
-        </button>
-      </div>
-      {!shouldInitiate() && status !== 'Unregistered' && (
-        <p>Waiting for peer to initiate the connection...</p>
-      )}
-      {shouldInitiate() && isOfferSent && !isConnected && (
-        <p>Offer sent. Waiting for peer to answer...</p>
-      )}
-      {isConnected && (
-        <p>Connected to {peerId}. You can start collaborating!</p>
-      )}
-      <div id="editor" style={{ height: '400px', marginTop: '20px' }}></div>
-    </div>
-  );
+    return (
+        <div>
+            <div>Status: {connectionStatus}</div>
+            {callInitiated ? (
+                <div>
+                    <p>{`Connection established with ${peerId}`}</p>
+                    <input value={message} onChange={e => setMessage(e.target.value)} placeholder="Enter your message" />
+                    <button onClick={sendMessage}>Send Message</button>
+                    <div>
+                        {chatMessages.map(msg => (
+                            <p key={msg.id} style={{ color: msg.own ? 'blue' : 'green' }}>{msg.text}</p>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                <div>
+                    <input value={peerId} onChange={e => setPeerId(e.target.value)} placeholder="Enter peer ID" />
+                    <button onClick={callPeer} disabled={callInitiated}>Call Peer</button>
+                </div>
+            )}
+        </div>
+    );
 }
 
-export default ColabTextEditor;
+export default App;
