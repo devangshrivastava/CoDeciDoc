@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
 function App() {
-    const [userId, setUserId] = useState(uuidv4());
+    const [userId] = useState(uuidv4());
     const [peerId, setPeerId] = useState('');
     const [connectionStatus, setConnectionStatus] = useState('Disconnected');
     const [callInitiated, setCallInitiated] = useState(false);
@@ -11,6 +11,7 @@ function App() {
     const peerConnectionRef = useRef(null);
     const ws = useRef(null);
     const dataChannelRef = useRef(null);
+    const iceCandidatesQueue = useRef([]);
 
     const connectWebSocket = useCallback(() => {
         ws.current = new WebSocket('ws://localhost:4444');
@@ -46,11 +47,27 @@ function App() {
         };
         ws.current.onclose = () => {
             console.log('WebSocket disconnected');
+            setConnectionStatus('Disconnected');
         };
         ws.current.onerror = (error) => {
             console.error('WebSocket error:', error);
         };
     }, [userId]);
+
+    const sendIceCandidate = useCallback((candidate) => {
+        if (ws.current && ws.current.readyState === WebSocket.OPEN && peerId) {
+            console.log('Sending ICE candidate:', candidate);
+            ws.current.send(JSON.stringify({
+                type: 'candidate',
+                candidate,
+                senderId: userId,
+                receiverId: peerId
+            }));
+        } else {
+            console.log('Queueing ICE candidate');
+            iceCandidatesQueue.current.push(candidate);
+        }
+    }, [userId, peerId]);
 
     const createPeerConnection = useCallback(() => {
         console.log('Creating peer connection');
@@ -59,8 +76,7 @@ function App() {
         });
         pc.onicecandidate = ({ candidate }) => {
             if (candidate) {
-                console.log('Sending ICE candidate:', candidate);
-                ws.current.send(JSON.stringify({ type: 'candidate', candidate, senderId: userId, receiverId: peerId }));
+                sendIceCandidate(candidate);
             }
         };
         pc.oniceconnectionstatechange = () => {
@@ -70,12 +86,11 @@ function App() {
         pc.onconnectionstatechange = () => {
             console.log('Connection state change:', pc.connectionState);
         };
-        // Create data channel for chat messages
         dataChannelRef.current = pc.createDataChannel("chatChannel");
         setupDataChannelEvents();
         peerConnectionRef.current = pc;
         return pc;
-    }, [peerId, userId]);
+    }, [sendIceCandidate]);
 
     const setupDataChannelEvents = () => {
         dataChannelRef.current.onopen = () => {
@@ -96,40 +111,68 @@ function App() {
 
     const handleOffer = useCallback(({ offer, senderId }) => {
         const pc = createPeerConnection();
+        setPeerId(senderId); // Set peerId when receiving an offer
         pc.ondatachannel = (event) => {
             dataChannelRef.current = event.channel;
             setupDataChannelEvents();
         };
-        pc.setRemoteDescription(new RTCSessionDescription(offer)).then(() => {
-            console.log('Remote description set with offer');
-            return pc.createAnswer();
-        }).then(answer => {
-            console.log('Answer created:', answer);
-            pc.setLocalDescription(answer);
-            ws.current.send(JSON.stringify({ type: 'answer', answer, senderId: userId, receiverId: senderId }));
-        }).catch(console.error);
-    }, [createPeerConnection, userId]);
+        pc.setRemoteDescription(new RTCSessionDescription(offer))
+            .then(() => pc.createAnswer())
+            .then(answer => pc.setLocalDescription(answer))
+            .then(() => {
+                console.log('Sending answer');
+                ws.current.send(JSON.stringify({
+                    type: 'answer',
+                    answer: pc.localDescription,
+                    senderId: userId,
+                    receiverId: senderId
+                }));
+                // Send any queued ICE candidates
+                iceCandidatesQueue.current.forEach(sendIceCandidate);
+                iceCandidatesQueue.current = [];
+            })
+            .catch(console.error);
+    }, [createPeerConnection, userId, sendIceCandidate]);
 
     const handleAnswer = useCallback(({ answer }) => {
         const pc = peerConnectionRef.current;
-        console.log('Setting remote description with answer');
-        pc.setRemoteDescription(new RTCSessionDescription(answer)).catch(console.error);
-    }, []);
+        pc.setRemoteDescription(new RTCSessionDescription(answer))
+            .then(() => {
+                console.log('Remote description set successfully');
+                // Send any queued ICE candidates
+                setTimeout(() => {
+                    iceCandidatesQueue.current.forEach(sendIceCandidate);
+                    iceCandidatesQueue.current = [];
+                }, 500);
+            })
+            .catch(console.error);
+    }, [sendIceCandidate]);
 
     const handleCandidate = useCallback(({ candidate }) => {
         const pc = peerConnectionRef.current;
-        console.log('Adding ICE candidate');
-        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+        if (pc && pc.remoteDescription) {
+            console.log('Adding ICE candidate');
+            pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+        } else {
+            console.log('Queueing ICE candidate');
+            iceCandidatesQueue.current.push(candidate);
+        }
     }, []);
 
     const callPeer = useCallback(() => {
         const pc = createPeerConnection();
-        console.log('Creating offer');
-        pc.createOffer().then(offer => {
-            console.log('Offer created:', offer);
-            pc.setLocalDescription(offer);
-            ws.current.send(JSON.stringify({ type: 'offer', offer, senderId: userId, receiverId: peerId }));
-        }).catch(console.error);
+        pc.createOffer()
+            .then(offer => pc.setLocalDescription(offer))
+            .then(() => {
+                console.log('Sending offer');
+                ws.current.send(JSON.stringify({
+                    type: 'offer',
+                    offer: pc.localDescription,
+                    senderId: userId,
+                    receiverId: peerId
+                }));
+            })
+            .catch(console.error);
         setCallInitiated(true);
     }, [createPeerConnection, userId, peerId]);
 
@@ -139,6 +182,8 @@ function App() {
             dataChannelRef.current.send(message);
             setChatMessages(messages => [...messages, { id: uuidv4(), text: message, own: true }]);
             setMessage('');
+        } else {
+            console.error('Data channel is not open');
         }
     }, [message]);
 
@@ -154,21 +199,34 @@ function App() {
     return (
         <div>
             <div>Status: {connectionStatus}</div>
+            <div>Your ID: {userId}</div>
             {callInitiated ? (
                 <div>
                     <p>{`Connection established with ${peerId}`}</p>
-                    <input value={message} onChange={e => setMessage(e.target.value)} placeholder="Enter your message" />
+                    <input 
+                        value={message} 
+                        onChange={e => setMessage(e.target.value)} 
+                        placeholder="Enter your message" 
+                    />
                     <button onClick={sendMessage}>Send Message</button>
                     <div>
                         {chatMessages.map(msg => (
-                            <p key={msg.id} style={{ color: msg.own ? 'blue' : 'green' }}>{msg.text}</p>
+                            <p key={msg.id} style={{ color: msg.own ? 'blue' : 'green' }}>
+                                {msg.text}
+                            </p>
                         ))}
                     </div>
                 </div>
             ) : (
                 <div>
-                    <input value={peerId} onChange={e => setPeerId(e.target.value)} placeholder="Enter peer ID" />
-                    <button onClick={callPeer} disabled={callInitiated}>Call Peer</button>
+                    <input 
+                        value={peerId} 
+                        onChange={e => setPeerId(e.target.value)} 
+                        placeholder="Enter peer ID" 
+                    />
+                    <button onClick={callPeer} disabled={callInitiated}>
+                        Call Peer
+                    </button>
                 </div>
             )}
         </div>
