@@ -5,7 +5,8 @@ const http = require('http');
 require('dotenv').config();
 
 const port = process.env.PORT || 4444;
-const host = process.env.HOST || 'localhost';
+// const host = process.env.HOST || 'localhost';
+const host = '0.0.0.0'; // Changed from 'localhost' to '0.0.0.0'
 
 const app = express();
 app.use(cors());

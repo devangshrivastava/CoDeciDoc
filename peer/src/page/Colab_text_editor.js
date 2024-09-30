@@ -1,20 +1,22 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import * as Y from 'yjs';
 
 function App() {
     const [userId] = useState(uuidv4());
     const [peerId, setPeerId] = useState('');
     const [connectionStatus, setConnectionStatus] = useState('Disconnected');
     const [callInitiated, setCallInitiated] = useState(false);
-    const [message, setMessage] = useState('');
-    const [chatMessages, setChatMessages] = useState([]);
+    const [text, setText] = useState('');
     const peerConnectionRef = useRef(null);
     const ws = useRef(null);
     const dataChannelRef = useRef(null);
     const iceCandidatesQueue = useRef([]);
+    const ydocRef = useRef(null);
+    const ytextRef = useRef(null);
 
     const connectWebSocket = useCallback(() => {
-        ws.current = new WebSocket('ws://localhost:4444');
+        ws.current = new WebSocket('ws://172.31.113.12:4444');
         ws.current.onopen = () => {
             console.log('WebSocket connected');
             ws.current.send(JSON.stringify({ type: 'register', userId }));
@@ -72,34 +74,53 @@ function App() {
     const createPeerConnection = useCallback(() => {
         console.log('Creating peer connection');
         const pc = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+            ],
+            iceTransportPolicy: 'all' // This will allow both local and relay candidates
         });
+
+        // Log and send ICE candidates to the peer
         pc.onicecandidate = ({ candidate }) => {
             if (candidate) {
+                console.log('New ICE candidate:', candidate);
                 sendIceCandidate(candidate);
             }
         };
+
+        // Listen for connection state changes
         pc.oniceconnectionstatechange = () => {
             console.log('ICE connection state change:', pc.iceConnectionState);
             setConnectionStatus(pc.iceConnectionState);
         };
+
+        // Monitor connection state (useful for when the connection succeeds)
         pc.onconnectionstatechange = () => {
             console.log('Connection state change:', pc.connectionState);
+            if (pc.connectionState === 'connected') {
+                console.log('Peers connected!');
+            }
         };
-        dataChannelRef.current = pc.createDataChannel("chatChannel");
+
+        // Create the data channel
+        dataChannelRef.current = pc.createDataChannel('editorChannel');
         setupDataChannelEvents();
         peerConnectionRef.current = pc;
+
         return pc;
     }, [sendIceCandidate]);
 
     const setupDataChannelEvents = () => {
         dataChannelRef.current.onopen = () => {
             console.log('Data channel is open');
+            initializeYjs();
         };
         dataChannelRef.current.onmessage = (event) => {
-            const data = event.data;
-            console.log('Received message on data channel:', data);
-            setChatMessages(messages => [...messages, { id: uuidv4(), text: data }]);
+            const data = JSON.parse(event.data);
+            if (data.type === 'yjsUpdate') {
+                Y.applyUpdate(ydocRef.current, new Uint8Array(data.update));
+            }
         };
         dataChannelRef.current.onclose = () => {
             console.log('Data channel is closed');
@@ -109,9 +130,27 @@ function App() {
         };
     };
 
+    const initializeYjs = () => {
+        ydocRef.current = new Y.Doc();
+        ytextRef.current = ydocRef.current.getText('shared');
+
+        ytextRef.current.observe(event => {
+            setText(ytextRef.current.toString());
+        });
+
+        ydocRef.current.on('update', update => {
+            if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+                dataChannelRef.current.send(JSON.stringify({
+                    type: 'yjsUpdate',
+                    update: Array.from(update)
+                }));
+            }
+        });
+    };
+
     const handleOffer = useCallback(({ offer, senderId }) => {
         const pc = createPeerConnection();
-        setPeerId(senderId); // Set peerId when receiving an offer
+        setPeerId(senderId);
         pc.ondatachannel = (event) => {
             dataChannelRef.current = event.channel;
             setupDataChannelEvents();
@@ -127,7 +166,6 @@ function App() {
                     senderId: userId,
                     receiverId: senderId
                 }));
-                // Send any queued ICE candidates
                 iceCandidatesQueue.current.forEach(sendIceCandidate);
                 iceCandidatesQueue.current = [];
             })
@@ -139,7 +177,6 @@ function App() {
         pc.setRemoteDescription(new RTCSessionDescription(answer))
             .then(() => {
                 console.log('Remote description set successfully');
-                // Send any queued ICE candidates
                 setTimeout(() => {
                     iceCandidatesQueue.current.forEach(sendIceCandidate);
                     iceCandidatesQueue.current = [];
@@ -176,16 +213,15 @@ function App() {
         setCallInitiated(true);
     }, [createPeerConnection, userId, peerId]);
 
-    const sendMessage = useCallback(() => {
-        if (dataChannelRef.current && dataChannelRef.current.readyState === "open") {
-            console.log('Sending message:', message);
-            dataChannelRef.current.send(message);
-            setChatMessages(messages => [...messages, { id: uuidv4(), text: message, own: true }]);
-            setMessage('');
-        } else {
-            console.error('Data channel is not open');
+    const handleTextChange = (e) => {
+        const newText = e.target.value;
+        setText(newText);
+
+        if (ytextRef.current) {
+            ytextRef.current.delete(0, ytextRef.current.length);
+            ytextRef.current.insert(0, newText);
         }
-    }, [message]);
+    };
 
     useEffect(() => {
         connectWebSocket();
@@ -193,6 +229,9 @@ function App() {
             console.log('Cleaning up WebSocket and peer connection');
             peerConnectionRef.current?.close();
             ws.current?.close();
+            if (ydocRef.current) {
+                ydocRef.current.destroy();
+            }
         };
     }, [connectWebSocket]);
 
@@ -203,26 +242,19 @@ function App() {
             {callInitiated ? (
                 <div>
                     <p>{`Connection established with ${peerId}`}</p>
-                    <input 
-                        value={message} 
-                        onChange={e => setMessage(e.target.value)} 
-                        placeholder="Enter your message" 
+                    <textarea
+                        value={text}
+                        onChange={handleTextChange}
+                        placeholder="Start typing..."
+                        style={{ width: '100%', height: '300px' }}
                     />
-                    <button onClick={sendMessage}>Send Message</button>
-                    <div>
-                        {chatMessages.map(msg => (
-                            <p key={msg.id} style={{ color: msg.own ? 'blue' : 'green' }}>
-                                {msg.text}
-                            </p>
-                        ))}
-                    </div>
                 </div>
             ) : (
                 <div>
-                    <input 
-                        value={peerId} 
-                        onChange={e => setPeerId(e.target.value)} 
-                        placeholder="Enter peer ID" 
+                    <input
+                        value={peerId}
+                        onChange={e => setPeerId(e.target.value)}
+                        placeholder="Enter peer ID"
                     />
                     <button onClick={callPeer} disabled={callInitiated}>
                         Call Peer
