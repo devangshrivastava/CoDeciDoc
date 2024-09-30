@@ -1,39 +1,84 @@
-.App {
-    text-align: center;
-  }
-  
-  .App-logo {
-    height: 40vmin;
-    pointer-events: none;
-  }
-  
-  @media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-      animation: App-logo-spin infinite 20s linear;
-    }
-  }
-  
-  .App-header {
-    background-color: #282c34;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
-  }
-  
-  .App-link {
-    color: #61dafb;
-  }
-  
-  @keyframes App-logo-spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  
+/* App.css */
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background-color: #f0f2f5;
+  font-family: 'Arial', sans-serif;
+  padding: 20px;
+}
+
+.status-bar {
+  margin-bottom: 20px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #333;
+}
+
+.user-info {
+  margin-bottom: 20px;
+  font-size: 16px;
+  color: #666;
+}
+
+.call-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.peer-input {
+  width: 300px;
+  padding: 10px;
+  margin-bottom: 20px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  font-size: 16px;
+}
+
+.call-button {
+  padding: 10px 20px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.call-button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
+
+.editor-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.connection-info {
+  margin-bottom: 20px;
+  font-size: 16px;
+  color: #4caf50;
+}
+
+.text-editor {
+  width: 100%;
+  max-width: 600px;
+  height: 300px;
+  padding: 10px;
+  font-size: 16px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.text-editor:focus {
+  border-color: #007bff;
+  outline: none;
+}

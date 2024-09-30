@@ -1,38 +1,69 @@
-.App {
-  text-align: center;
+/* General styles for the app container */
+.app-container {
+  font-family: Arial, sans-serif;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #f0f0f0;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+/* Styles for status and user information */
+.info-section {
+  margin-bottom: 20px;
+  padding: 15px;
+  background-color: #ffffff;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+.info-item {
+  margin-bottom: 10px;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+.info-label {
+  font-weight: bold;
+  color: #555;
 }
 
-.App-link {
-  color: #61dafb;
+.info-value {
+  color: #333;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* Status-specific styles */
+.status {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-weight: bold;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.status-disconnected {
+  background-color: #ffcccb;
+  color: #d8000c;
+}
+
+.status-connected {
+  background-color: #dff0d8;
+  color: #4caf50;
+}
+
+/* Styles for peer connection information */
+.peer-connection {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #e7f3fe;
+  border-radius: 6px;
+  border-left: 5px solid #2196F3;
+}
+
+.peer-username {
+  font-size: 16px;
+  font-weight: bold;
+  color: #2196F3;
 }
