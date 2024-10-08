@@ -84,48 +84,61 @@ function App() {
         }
     }, [userId, peerId]);
 
+
+    
+
     const createPeerConnection = useCallback(() => {
         console.log('Creating peer connection');
         const pc = new RTCPeerConnection({
             iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
                 { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
             ],
-            iceTransportPolicy: 'all'
+            iceTransportPolicy: 'all',
+            iceCandidatePoolSize: 10
         });
-
+    
         pc.onicecandidate = ({ candidate }) => {
             if (candidate) {
                 console.log('New ICE candidate:', candidate);
                 sendIceCandidate(candidate);
             }
         };
-
+    
         pc.oniceconnectionstatechange = () => {
             console.log('ICE connection state change:', pc.iceConnectionState);
             setConnectionStatus(pc.iceConnectionState);
         };
-
+    
         pc.onconnectionstatechange = () => {
             console.log('Connection state change:', pc.connectionState);
             if (pc.connectionState === 'connected') {
                 console.log('Peers connected!');
+            } else if (pc.connectionState === 'failed') {
+                console.error('Connection failed. Attempting to restart ICE...');
+                pc.restartIce();
             }
         };
-
+    
+        pc.onicegatheringstatechange = () => {
+            console.log('ICE gathering state:', pc.iceGatheringState);
+        };
+    
         dataChannelRef.current = pc.createDataChannel('editorChannel');
         setupDataChannelEvents();
         peerConnectionRef.current = pc;
-
+    
         return pc;
     }, [sendIceCandidate]);
-
+    
     const setupDataChannelEvents = () => {
         dataChannelRef.current.onopen = () => {
             console.log('Data channel is open');
             initializeYjs();
         };
         dataChannelRef.current.onmessage = (event) => {
+            console.log('Data channel message received:', event.data);
             const data = JSON.parse(event.data);
             if (data.type === 'yjsUpdate') {
                 Y.applyUpdate(ydocRef.current, new Uint8Array(data.update));
