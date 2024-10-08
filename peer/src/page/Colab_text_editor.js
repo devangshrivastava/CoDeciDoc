@@ -6,12 +6,11 @@ import './App.css';
 function App() {
     const [userId] = useState(uuidv4());
     const [username, setUsername] = useState('');
-    const [peerIdentifier, setPeerIdentifier] = useState('');
+    const [peerId, setPeerId] = useState('');
     const [peerUsername, setPeerUsername] = useState('');
     const [connectionStatus, setConnectionStatus] = useState('Disconnected');
     const [callInitiated, setCallInitiated] = useState(false);
     const [text, setText] = useState('');
-    const [error, setError] = useState('');
     const peerConnectionRef = useRef(null);
     const ws = useRef(null);
     const dataChannelRef = useRef(null);
@@ -41,13 +40,14 @@ function App() {
                     setConnectionStatus('Registered');
                     break;
                 case 'offer':
-                    console.log(`Offer received from ${message.senderUsername} (${message.senderId})`);
+                    console.log(`Offer received from ${message.senderId} (${message.senderUsername})`);
+                    setPeerId(message.senderId);
                     setPeerUsername(message.senderUsername);
                     handleOffer(message);
                     setCallInitiated(true);
                     break;
                 case 'answer':
-                    console.log(`Answer received from ${message.senderUsername} (${message.senderId})`);
+                    console.log(`Answer received from ${message.senderId} (${message.senderUsername})`);
                     setPeerUsername(message.senderUsername);
                     handleAnswer(message);
                     setCallInitiated(true);
@@ -55,10 +55,6 @@ function App() {
                 case 'candidate':
                     console.log(`ICE candidate received from ${message.senderId}`);
                     handleCandidate(message);
-                    break;
-                case 'error':
-                    console.error(`Error: ${message.message}`);
-                    setError(message.message);
                     break;
                 default:
                     console.log('Unknown message type:', message.type);
@@ -74,19 +70,19 @@ function App() {
     }, [userId]);
 
     const sendIceCandidate = useCallback((candidate) => {
-        if (ws.current && ws.current.readyState === WebSocket.OPEN && peerIdentifier) {
+        if (ws.current && ws.current.readyState === WebSocket.OPEN && peerId) {
             console.log('Sending ICE candidate:', candidate);
             ws.current.send(JSON.stringify({
                 type: 'candidate',
                 candidate,
                 senderId: userId,
-                receiverId: peerIdentifier
+                receiverId: peerId
             }));
         } else {
             console.log('Queueing ICE candidate');
             iceCandidatesQueue.current.push(candidate);
         }
-    }, [userId, peerIdentifier]);
+    }, [userId, peerId]);
 
     const createPeerConnection = useCallback(() => {
         console.log('Creating peer connection');
@@ -162,47 +158,44 @@ function App() {
     };
 
     const handleOffer = useCallback(({ offer, senderId }) => {
+        setPeerId(senderId);
         const pc = createPeerConnection();
-        setPeerIdentifier(senderId);
+       
         pc.ondatachannel = (event) => {
             dataChannelRef.current = event.channel;
             setupDataChannelEvents();
         };
+
         pc.setRemoteDescription(new RTCSessionDescription(offer))
-            .then(() => pc.createAnswer())
-            .then(answer => pc.setLocalDescription(answer))
-            .then(() => {
-                console.log('Sending answer');
-                ws.current.send(JSON.stringify({
-                    type: 'answer',
-                    answer: pc.localDescription,
-                    senderId: userId,
-                    receiverId: senderId
-                }));
-                iceCandidatesQueue.current.forEach(sendIceCandidate);
-                iceCandidatesQueue.current = [];
-            })
-            .catch(console.error);
-    }, [createPeerConnection, userId, sendIceCandidate]);
+        .then(() => pc.createAnswer())
+        .then(answer => pc.setLocalDescription(answer))
+        .then(() => {
+            console.log('Sending answer');
+            ws.current.send(JSON.stringify({
+                type: 'answer',
+                answer: pc.localDescription,
+                senderId: userId,
+                receiverId: senderId
+            }));
+        })
+        .catch(console.error);
+    }, [createPeerConnection, userId]);
 
     const handleAnswer = useCallback(({ answer }) => {
         const pc = peerConnectionRef.current;
         pc.setRemoteDescription(new RTCSessionDescription(answer))
             .then(() => {
                 console.log('Remote description set successfully');
-                setTimeout(() => {
-                    iceCandidatesQueue.current.forEach(sendIceCandidate);
-                    iceCandidatesQueue.current = [];
-                }, 500);
             })
             .catch(console.error);
-    }, [sendIceCandidate]);
+    }, []);
 
     const handleCandidate = useCallback(({ candidate }) => {
         const pc = peerConnectionRef.current;
-        if (pc && pc.remoteDescription) {
-            console.log('Adding ICE candidate');
-            pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+        if (pc) {
+            pc.addIceCandidate(new RTCIceCandidate(candidate))
+                .then(() => console.log('ICE candidate added successfully'))
+                .catch(error => console.error('Error adding ICE candidate:', error));
         } else {
             console.log('Queueing ICE candidate');
             iceCandidatesQueue.current.push(candidate);
@@ -210,8 +203,12 @@ function App() {
     }, []);
 
     const callPeer = useCallback(() => {
-        setError('');
+        if (!peerId) {
+            alert('Please enter a peer ID');
+            return;
+        }
         const pc = createPeerConnection();
+
         pc.createOffer()
             .then(offer => pc.setLocalDescription(offer))
             .then(() => {
@@ -220,11 +217,12 @@ function App() {
                     type: 'offer',
                     offer: pc.localDescription,
                     senderId: userId,
-                    receiverId: peerIdentifier
+                    receiverId: peerId
                 }));
             })
             .catch(console.error);
-    }, [createPeerConnection, userId, peerIdentifier]);
+        setCallInitiated(true);
+    }, [createPeerConnection, userId, peerId]);
 
     const handleTextChange = (e) => {
         const newText = e.target.value;
@@ -248,45 +246,38 @@ function App() {
         };
     }, [connectWebSocket]);
 
+    useEffect(() => {
+        if (peerConnectionRef.current && iceCandidatesQueue.current.length > 0) {
+            iceCandidatesQueue.current.forEach(candidate => {
+                peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+                    .then(() => console.log('Queued ICE candidate added successfully'))
+                    .catch(error => console.error('Error adding queued ICE candidate:', error));
+            });
+            iceCandidatesQueue.current = [];
+        }
+    }, [peerId]);
+
     return (
         <div className="app-container">
-        <div className="info-section">
-            <div className="info-item">
-                <span className="info-label">Status: </span>
-                <span className={`status ${connectionStatus === 'Connected' ? 'status-connected' : 'status-disconnected'}`}>
-                    {connectionStatus}
-                </span>
-            </div>
-            <div className="info-item">
-                <span className="info-label">Your ID: </span>
-                <span className="info-value">{userId}</span>
-            </div>
-            <div className="info-item">
-                <span className="info-label">Your Username: </span>
-                <span className="info-value">{username}</span>
-            </div>
-        </div>
-        
-        {error && <div className="error">{error}</div>}
-        
-        {callInitiated ? (
-            <div>
-                <div className="peer-connection">
-                    <p>Connected with <span className="peer-username">{peerUsername}</span></p>
+            <div>Status: {connectionStatus}</div>
+            <div>Your ID: {userId}</div>
+            <div>Your Username: {username}</div>
+            {callInitiated ? (
+                <div>
+                    <p>{`Connected with ${peerUsername} (${peerId})`}</p>
+                    <textarea
+                        value={text}
+                        onChange={handleTextChange}
+                        placeholder="Start typing..."
+                        style={{ width: '100%', height: '300px' }}
+                    />
                 </div>
-                <textarea
-                    value={text}
-                    onChange={handleTextChange}
-                    placeholder="Start typing..."
-                    style={{ width: '100%', height: '300px', marginTop: '20px' }}
-                />
-            </div>
-        ): (
+            ) : (
                 <div>
                     <input
-                        value={peerIdentifier}
-                        onChange={e => setPeerIdentifier(e.target.value)}
-                        placeholder="Enter peer username or ID"
+                        value={peerId}
+                        onChange={e => setPeerId(e.target.value)}
+                        placeholder="Enter peer ID"
                         className="peer-input"
                     />
                     <button onClick={callPeer} disabled={callInitiated} className="call-button">

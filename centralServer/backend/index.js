@@ -13,7 +13,7 @@ app.use(cors());
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const clients = new Map(); // Store clients by their userId
+const clients = new Map(); // Store clients by their userId (websockets)
 const usernames = new Map(); // Store usernames by their userId
 const usernameToId = new Map(); // Store userId by username
 
@@ -51,34 +51,17 @@ wss.on('connection', function connection(ws) {
                     break;
 
                 case 'offer':
-                case 'answer':
-                case 'candidate':
-                    let targetId = message.receiverId;
-                    // If receiverId is not a valid UUID, assume it's a username and get the corresponding ID
-                    if (!isValidUUID(targetId)) {
-                        targetId = usernameToId.get(targetId);
-                    }
-                    console.log(`Attempting to forward ${message.type} from ${clientId} to ${targetId}`);
-                    const targetClient = clients.get(targetId);
-                    if (targetClient && targetClient.readyState === WebSocket.OPEN) {
-                        console.log(`Successfully forwarding ${message.type} from ${clientId} to ${targetId}`);
-                        targetClient.send(JSON.stringify({
-                            ...message,
-                            senderId: clientId,
-                            senderUsername: usernames.get(clientId),
-                            receiverId: targetId,
-                            receiverUsername: usernames.get(targetId)
-                        }));
-                    } else {
-                        console.error(`Receiver ${targetId} not found or connection is closed. Client map size: ${clients.size}`);
-                        console.log(`Current clients in map: ${Array.from(clients.keys()).join(', ')}`);
-                        // Send error message back to sender
-                        ws.send(JSON.stringify({
-                            type: 'error',
-                            message: `User ${message.receiverId} not found or offline.`
-                        }));
-                    }
+                    handleOffer(message, clientId, ws);
                     break;
+
+                case 'answer':
+                    handleAnswer(message, clientId, ws);
+                    break;
+
+                case 'candidate':
+                    handleCandidate(message, clientId, ws);
+                    break;
+
                 default:
                     console.error(`Unknown message type: ${message.type}`);
             }
@@ -101,6 +84,82 @@ wss.on('connection', function connection(ws) {
         console.error(`WebSocket error for client ${clientId || 'unknown'}:`, error);
     });
 });
+
+
+function forwardMessage(message, clientId, ws, messageType) {
+    let targetId = message.receiverId;
+
+    // If receiverId is not a valid UUID, assume it's a username and get the corresponding ID
+    if (!isValidUUID(targetId)) {
+        targetId = usernameToId.get(targetId);
+    }
+
+    console.log(`Attempting to forward ${messageType} from ${usernames.get(clientId)} to ${usernames.get(targetId)}`);
+
+    const targetClient = clients.get(targetId);
+    if (targetClient && targetClient.readyState === WebSocket.OPEN) {
+        console.log(`Successfully forwarding ${messageType} from ${usernames.get(clientId)} to ${usernames.get(targetId)}`);
+        targetClient.send(JSON.stringify({
+            type: messageType,
+            ...message,
+            senderId: clientId,
+            senderUsername: usernames.get(clientId),
+            receiverId: targetId,
+            receiverUsername: usernames.get(targetId)
+        }));
+    } else {
+        console.error(`Receiver ${targetId} not found or connection is closed. Client map size: ${clients.size}`);
+        console.log(`Current clients in map: ${Array.from(clients.keys()).join(', ')}`);
+
+        // Send error message back to sender
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: `User ${message.receiverId} not found or offline.`
+        }));
+    }
+}
+
+// Function to handle 'offer' messages
+function handleOffer(message, clientId, ws) {
+    if (!message.offer || !message.receiverId) {
+        console.error(`Invalid offer message from ${clientId}`);
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: `Invalid offer message. Missing 'offer' or 'receiverId'.`
+        }));
+        return;
+    }
+
+    forwardMessage(message, clientId, ws, 'offer');
+}
+
+// Function to handle 'answer' messages
+function handleAnswer(message, clientId, ws) {
+    if (!message.answer || !message.receiverId) {
+        console.error(`Invalid answer message from ${clientId}`);
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: `Invalid answer message. Missing 'answer' or 'receiverId'.`
+        }));
+        return;
+    }
+
+    forwardMessage(message, clientId, ws, 'answer');
+}
+
+// Function to handle 'candidate' messages
+function handleCandidate(message, clientId, ws) {
+    if (!message.candidate || !message.receiverId) {
+        console.error(`Invalid candidate message from ${clientId}`);
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: `Invalid candidate message. Missing 'candidate' or 'receiverId'.`
+        }));
+        return;
+    }
+
+    forwardMessage(message, clientId, ws, 'candidate');
+}
 
 function isValidUUID(uuid) {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
