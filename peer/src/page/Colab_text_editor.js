@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { io } from 'socket.io-client';
 import * as Y from 'yjs';
 import './App.css';
 
@@ -12,80 +13,83 @@ function App() {
     const [callInitiated, setCallInitiated] = useState(false);
     const [text, setText] = useState('');
     const peerConnectionRef = useRef(null);
-    const ws = useRef(null);
+    const socketRef = useRef(null);
     const dataChannelRef = useRef(null);
     const iceCandidatesQueue = useRef([]);
     const ydocRef = useRef(null);
     const ytextRef = useRef(null);
+    const peerIdRef = useRef(''); // Added useRef for peerId
 
-    const connectWebSocket = useCallback(() => {
-        ws.current = new WebSocket('ws://172.31.113.12:4444');
-        ws.current.onopen = () => {
-            console.log('WebSocket connected');
-            ws.current.send(JSON.stringify({ type: 'register', userId }));
-        };
-        ws.current.onmessage = (event) => {
-            const message = JSON.parse(event.data);
-            console.log('WebSocket message received:', message);
-            switch (message.type) {
-                case 'requestUsername':
-                    const enteredUsername = prompt("Please enter your username:");
-                    if (enteredUsername) {
-                        setUsername(enteredUsername);
-                        ws.current.send(JSON.stringify({ type: 'setUsername', username: enteredUsername }));
-                    }
-                    break;
-                case 'registerSuccess':
-                    console.log(`Registration successful: ${message.userId}, Username: ${message.username}`);
-                    setConnectionStatus('Registered');
-                    break;
-                case 'offer':
-                    console.log(`Offer received from ${message.senderId} (${message.senderUsername})`);
-                    setPeerId(message.senderId);
-                    setPeerUsername(message.senderUsername);
-                    handleOffer(message);
-                    setCallInitiated(true);
-                    break;
-                case 'answer':
-                    console.log(`Answer received from ${message.senderId} (${message.senderUsername})`);
-                    setPeerUsername(message.senderUsername);
-                    handleAnswer(message);
-                    setCallInitiated(true);
-                    break;
-                case 'candidate':
-                    console.log(`ICE candidate received from ${message.senderId}`);
-                    handleCandidate(message);
-                    break;
-                default:
-                    console.log('Unknown message type:', message.type);
-            }
-        };
-        ws.current.onclose = () => {
-            console.log('WebSocket disconnected');
+    const connectSocketIO = useCallback(() => {
+        socketRef.current = io('http://172.31.113.12:4444');
+
+        socketRef.current.on('connect', () => {
+            console.log('Socket.IO connected');
+            socketRef.current.emit('register', { userId });
+            setConnectionStatus('Connected');
+        });
+
+        socketRef.current.on('disconnect', () => {
+            console.log('Socket.IO disconnected');
             setConnectionStatus('Disconnected');
-        };
-        ws.current.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
+        });
+
+        socketRef.current.on('requestUsername', () => {
+            const enteredUsername = prompt("Please enter your username:");
+            if (enteredUsername) {
+                setUsername(enteredUsername);
+                socketRef.current.emit('setUsername', { username: enteredUsername });
+            }
+        });
+
+        socketRef.current.on('registerSuccess', (message) => {
+            console.log(`Registration successful: ${message.userId}, Username: ${message.username}`);
+            setConnectionStatus('Registered');
+        });
+
+        socketRef.current.on('offer', (message) => {
+            console.log(`Offer received from ${message.senderId} (${message.senderUsername})`);
+            setPeerId(message.senderId);
+            peerIdRef.current = message.senderId; // Update peerIdRef
+            setPeerUsername(message.senderUsername);
+            handleOffer(message);
+            setCallInitiated(true);
+        });
+
+        socketRef.current.on('answer', (message) => {
+            console.log(`Answer received from ${message.senderUsername} (${message.senderId})`);
+            setPeerUsername(message.senderUsername);
+            handleAnswer(message);
+            setCallInitiated(true);
+        });
+
+        socketRef.current.on('candidate', (message) => {
+            console.log(`ICE candidate received from ${message.senderId}`);
+            handleCandidate(message);
+        });
+
+        socketRef.current.on('errorMessage', (error) => {
+            console.error('Error from server:', error.message);
+        });
+
+        socketRef.current.on('connect_error', (error) => {
+            console.error('Socket.IO connection error:', error);
+        });
     }, [userId]);
 
     const sendIceCandidate = useCallback((candidate) => {
-        if (ws.current && ws.current.readyState === WebSocket.OPEN && peerId) {
+        if (socketRef.current && socketRef.current.connected && peerIdRef.current) {
             console.log('Sending ICE candidate:', candidate);
-            ws.current.send(JSON.stringify({
-                type: 'candidate',
+            socketRef.current.emit('candidate', {
                 candidate,
                 senderId: userId,
-                receiverId: peerId
-            }));
+                receiverId: peerIdRef.current // Use peerIdRef.current
+            });
         } else {
             console.log('Queueing ICE candidate');
             iceCandidatesQueue.current.push(candidate);
         }
-    }, [userId, peerId]);
-
-
-    
+    }, [userId]);
 
     const createPeerConnection = useCallback(() => {
         console.log('Creating peer connection');
@@ -93,24 +97,28 @@ function App() {
             iceServers: [
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+                {
+                    urls: 'turn:openrelay.metered.ca:80',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
             ],
             iceTransportPolicy: 'all',
             iceCandidatePoolSize: 10
         });
-    
+
         pc.onicecandidate = ({ candidate }) => {
             if (candidate) {
                 console.log('New ICE candidate:', candidate);
                 sendIceCandidate(candidate);
             }
         };
-    
+
         pc.oniceconnectionstatechange = () => {
             console.log('ICE connection state change:', pc.iceConnectionState);
             setConnectionStatus(pc.iceConnectionState);
         };
-    
+
         pc.onconnectionstatechange = () => {
             console.log('Connection state change:', pc.connectionState);
             if (pc.connectionState === 'connected') {
@@ -120,18 +128,18 @@ function App() {
                 pc.restartIce();
             }
         };
-    
+
         pc.onicegatheringstatechange = () => {
             console.log('ICE gathering state:', pc.iceGatheringState);
         };
-    
+
         dataChannelRef.current = pc.createDataChannel('editorChannel');
         setupDataChannelEvents();
         peerConnectionRef.current = pc;
-    
+
         return pc;
     }, [sendIceCandidate]);
-    
+
     const setupDataChannelEvents = () => {
         dataChannelRef.current.onopen = () => {
             console.log('Data channel is open');
@@ -156,43 +164,48 @@ function App() {
         ydocRef.current = new Y.Doc();
         ytextRef.current = ydocRef.current.getText('shared');
 
-        ytextRef.current.observe(event => {
+        ytextRef.current.observe(() => {
             setText(ytextRef.current.toString());
         });
 
-        ydocRef.current.on('update', update => {
+        ydocRef.current.on('update', (update) => {
             if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
-                dataChannelRef.current.send(JSON.stringify({
-                    type: 'yjsUpdate',
-                    update: Array.from(update)
-                }));
+                dataChannelRef.current.send(
+                    JSON.stringify({
+                        type: 'yjsUpdate',
+                        update: Array.from(update)
+                    })
+                );
             }
         });
     };
 
-    const handleOffer = useCallback(({ offer, senderId }) => {
-        setPeerId(senderId);
-        const pc = createPeerConnection();
-       
-        pc.ondatachannel = (event) => {
-            dataChannelRef.current = event.channel;
-            setupDataChannelEvents();
-        };
+    const handleOffer = useCallback(
+        ({ offer, senderId }) => {
+            setPeerId(senderId);
+            peerIdRef.current = senderId; // Update peerIdRef
+            const pc = createPeerConnection();
 
-        pc.setRemoteDescription(new RTCSessionDescription(offer))
-        .then(() => pc.createAnswer())
-        .then(answer => pc.setLocalDescription(answer))
-        .then(() => {
-            console.log('Sending answer');
-            ws.current.send(JSON.stringify({
-                type: 'answer',
-                answer: pc.localDescription,
-                senderId: userId,
-                receiverId: senderId
-            }));
-        })
-        .catch(console.error);
-    }, [createPeerConnection, userId]);
+            pc.ondatachannel = (event) => {
+                dataChannelRef.current = event.channel;
+                setupDataChannelEvents();
+            };
+
+            pc.setRemoteDescription(new RTCSessionDescription(offer))
+                .then(() => pc.createAnswer())
+                .then((answer) => pc.setLocalDescription(answer))
+                .then(() => {
+                    console.log('Sending answer');
+                    socketRef.current.emit('answer', {
+                        answer: pc.localDescription,
+                        senderId: userId,
+                        receiverId: senderId
+                    });
+                })
+                .catch(console.error);
+        },
+        [createPeerConnection, userId]
+    );
 
     const handleAnswer = useCallback(({ answer }) => {
         const pc = peerConnectionRef.current;
@@ -208,7 +221,7 @@ function App() {
         if (pc) {
             pc.addIceCandidate(new RTCIceCandidate(candidate))
                 .then(() => console.log('ICE candidate added successfully'))
-                .catch(error => console.error('Error adding ICE candidate:', error));
+                .catch((error) => console.error('Error adding ICE candidate:', error));
         } else {
             console.log('Queueing ICE candidate');
             iceCandidatesQueue.current.push(candidate);
@@ -217,23 +230,26 @@ function App() {
 
     const callPeer = useCallback(() => {
         if (!peerId) {
-            alert('Please enter a peer ID');
+            alert('Please enter a peer ID or username');
             return;
         }
+        peerIdRef.current = peerId; // Update peerIdRef when calling
         const pc = createPeerConnection();
 
         pc.createOffer()
-            .then(offer => pc.setLocalDescription(offer))
+            .then((offer) => {
+                return pc.setLocalDescription(offer);
+            })
             .then(() => {
                 console.log('Sending offer');
-                ws.current.send(JSON.stringify({
-                    type: 'offer',
+                socketRef.current.emit('offer', {
                     offer: pc.localDescription,
                     senderId: userId,
                     receiverId: peerId
-                }));
+                });
             })
             .catch(console.error);
+
         setCallInitiated(true);
     }, [createPeerConnection, userId, peerId]);
 
@@ -248,27 +264,35 @@ function App() {
     };
 
     useEffect(() => {
-        connectWebSocket();
+        connectSocketIO();
         return () => {
-            console.log('Cleaning up WebSocket and peer connection');
+            console.log('Cleaning up Socket.IO and peer connection');
             peerConnectionRef.current?.close();
-            ws.current?.close();
+            socketRef.current?.disconnect();
             if (ydocRef.current) {
                 ydocRef.current.destroy();
             }
         };
-    }, [connectWebSocket]);
+    }, [connectSocketIO]);
 
     useEffect(() => {
-        if (peerConnectionRef.current && iceCandidatesQueue.current.length > 0) {
-            iceCandidatesQueue.current.forEach(candidate => {
-                peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate))
-                    .then(() => console.log('Queued ICE candidate added successfully'))
-                    .catch(error => console.error('Error adding queued ICE candidate:', error));
+        if (
+            socketRef.current &&
+            socketRef.current.connected &&
+            peerIdRef.current &&
+            iceCandidatesQueue.current.length > 0
+        ) {
+            iceCandidatesQueue.current.forEach((candidate) => {
+                console.log('Sending queued ICE candidate:', candidate);
+                socketRef.current.emit('candidate', {
+                    candidate,
+                    senderId: userId,
+                    receiverId: peerIdRef.current // Use peerIdRef.current
+                });
             });
             iceCandidatesQueue.current = [];
         }
-    }, [peerId]);
+    }, [userId]);
 
     return (
         <div className="app-container">
@@ -289,8 +313,8 @@ function App() {
                 <div>
                     <input
                         value={peerId}
-                        onChange={e => setPeerId(e.target.value)}
-                        placeholder="Enter peer ID"
+                        onChange={(e) => setPeerId(e.target.value)}
+                        placeholder="Enter peer ID or username"
                         className="peer-input"
                     />
                     <button onClick={callPeer} disabled={callInitiated} className="call-button">

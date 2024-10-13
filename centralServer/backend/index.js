@@ -1,76 +1,69 @@
 const express = require('express');
 const cors = require('cors');
-const WebSocket = require('ws');
 const http = require('http');
 require('dotenv').config();
 
+const { Server } = require('socket.io');
+
 const port = 4444;
-const host = '0.0.0.0';
+const host = '172.31.113.12';
 
 const app = express();
 app.use(cors());
 
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
 
-const clients = new Map(); // Store clients by their userId (websockets)
+const io = new Server(server, {
+    cors: {
+        origin: '*', // Replace with your client's origin if needed
+        methods: ['GET', 'POST']
+    }
+});
+
+const clients = new Map(); // Store clients by their userId (sockets)
 const usernames = new Map(); // Store usernames by their userId
 const usernameToId = new Map(); // Store userId by username
 
-wss.on('connection', function connection(ws) {
+io.on('connection', (socket) => {
     let clientId = null;
 
-    ws.on('message', function incoming(message) {
-        try {
-            message = JSON.parse(message);
+    socket.on('register', (message) => {
+        clientId = message.userId;
+        clients.set(clientId, socket);
+        console.log(`Client registered: ${clientId}`);
 
-            switch (message.type) {
-                case 'register':
-                    clientId = message.userId;
-                    clients.set(clientId, ws);
-                    console.log(`Client registered: ${clientId}`);
-                    
-                    // Ask for username
-                    ws.send(JSON.stringify({ type: 'requestUsername' }));
-                    break;
+        // Ask for username
+        socket.emit('requestUsername');
+    });
 
-                case 'setUsername':
-                    if (clientId) {
-                        const username = message.username;
-                        usernames.set(clientId, username);
-                        usernameToId.set(username, clientId);
-                        console.log(`Username set for ${clientId}: ${username}`);
-                        
-                        // Send registration success response back to the client
-                        ws.send(JSON.stringify({ 
-                            type: 'registerSuccess', 
-                            userId: clientId,
-                            username: username
-                        }));
-                    }
-                    break;
+    socket.on('setUsername', (message) => {
+        if (clientId) {
+            const username = message.username;
+            usernames.set(clientId, username);
+            usernameToId.set(username, clientId);
+            console.log(`Username set for ${clientId}: ${username}`);
 
-                case 'offer':
-                    handleOffer(message, clientId, ws);
-                    break;
-
-                case 'answer':
-                    handleAnswer(message, clientId, ws);
-                    break;
-
-                case 'candidate':
-                    handleCandidate(message, clientId, ws);
-                    break;
-
-                default:
-                    console.error(`Unknown message type: ${message.type}`);
-            }
-        } catch (error) {
-            console.error(`Error parsing message:`, error);
+            // Send registration success response back to the client
+            socket.emit('registerSuccess', {
+                userId: clientId,
+                username: username
+            });
         }
     });
 
-    ws.on('close', () => {
+    socket.on('offer', (message) => {
+        handleOffer(message, clientId, socket);
+    });
+
+    socket.on('answer', (message) => {
+        handleAnswer(message, clientId, socket);
+    });
+
+    socket.on('candidate', (message) => {
+        handleCandidate(message, clientId, socket);
+    });
+
+    socket.on('disconnect', () => {
         if (clientId) {
             const username = usernames.get(clientId);
             clients.delete(clientId);
@@ -80,13 +73,12 @@ wss.on('connection', function connection(ws) {
         }
     });
 
-    ws.on('error', (error) => {
-        console.error(`WebSocket error for client ${clientId || 'unknown'}:`, error);
+    socket.on('error', (error) => {
+        console.error(`Socket error for client ${clientId || 'unknown'}:`, error);
     });
 });
 
-
-function forwardMessage(message, clientId, ws, messageType) {
+function forwardMessage(message, clientId, socket, messageType) {
     let targetId = message.receiverId;
 
     // If receiverId is not a valid UUID, assume it's a username and get the corresponding ID
@@ -97,68 +89,63 @@ function forwardMessage(message, clientId, ws, messageType) {
     console.log(`Attempting to forward ${messageType} from ${usernames.get(clientId)} to ${usernames.get(targetId)}`);
 
     const targetClient = clients.get(targetId);
-    if (targetClient && targetClient.readyState === WebSocket.OPEN) {
+    if (targetClient) {
         console.log(`Successfully forwarding ${messageType} from ${usernames.get(clientId)} to ${usernames.get(targetId)}`);
-        targetClient.send(JSON.stringify({
-            type: messageType,
+        targetClient.emit(messageType, {
             ...message,
             senderId: clientId,
             senderUsername: usernames.get(clientId),
             receiverId: targetId,
             receiverUsername: usernames.get(targetId)
-        }));
+        });
     } else {
         console.error(`Receiver ${targetId} not found or connection is closed. Client map size: ${clients.size}`);
         console.log(`Current clients in map: ${Array.from(clients.keys()).join(', ')}`);
 
         // Send error message back to sender
-        ws.send(JSON.stringify({
-            type: 'error',
+        socket.emit('errorMessage', {
             message: `User ${message.receiverId} not found or offline.`
-        }));
+        });
     }
 }
 
 // Function to handle 'offer' messages
-function handleOffer(message, clientId, ws) {
+function handleOffer(message, clientId, socket) {
     if (!message.offer || !message.receiverId) {
         console.error(`Invalid offer message from ${clientId}`);
-        ws.send(JSON.stringify({
-            type: 'error',
+        socket.emit('errorMessage', {
             message: `Invalid offer message. Missing 'offer' or 'receiverId'.`
-        }));
+        });
         return;
     }
 
-    forwardMessage(message, clientId, ws, 'offer');
+    forwardMessage(message, clientId, socket, 'offer');
 }
 
 // Function to handle 'answer' messages
-function handleAnswer(message, clientId, ws) {
+function handleAnswer(message, clientId, socket) {
     if (!message.answer || !message.receiverId) {
         console.error(`Invalid answer message from ${clientId}`);
-        ws.send(JSON.stringify({
-            type: 'error',
+        socket.emit('errorMessage', {
             message: `Invalid answer message. Missing 'answer' or 'receiverId'.`
-        }));
+        });
         return;
     }
 
-    forwardMessage(message, clientId, ws, 'answer');
+    forwardMessage(message, clientId, socket, 'answer');
 }
 
 // Function to handle 'candidate' messages
-function handleCandidate(message, clientId, ws) {
+function handleCandidate(message, clientId, socket) {
     if (!message.candidate || !message.receiverId) {
         console.error(`Invalid candidate message from ${clientId}`);
-        ws.send(JSON.stringify({
-            type: 'error',
+        socket.emit('errorMessage', {
             message: `Invalid candidate message. Missing 'candidate' or 'receiverId'.`
-        }));
+        });
         return;
     }
 
-    forwardMessage(message, clientId, ws, 'candidate');
+    forwardMessage(message, clientId, socket, 'candidate');
 }
 
 function isValidUUID(uuid) {
