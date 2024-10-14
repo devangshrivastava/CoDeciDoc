@@ -175,6 +175,7 @@ function App() {
             console.log('Data channel is open');
             initializeYjs();
         };
+
         dataChannelRef.current.onmessage = (event) => {
             console.log('Data channel message received:', event.data);
             const data = JSON.parse(event.data);
@@ -302,14 +303,17 @@ function App() {
         }
     };
 
+
+
+
     useEffect(() => {
         connectSocketIO();
         
         // Log network information
-        if (navigator.connection) {
-            console.log('Network type:', navigator.connection.type);
-            console.log('Effective network type:', navigator.connection.effectiveType);
-        }
+        // if (navigator.connection) {
+        //     console.log('Network type:', navigator.connection.type);
+        //     console.log('Effective network type:', navigator.connection.effectiveType);
+        // }
 
         return () => {
             console.log('Cleaning up Socket.IO and peer connection');
@@ -341,6 +345,7 @@ function App() {
         }
     }, [userId]);
 
+
     return (
         <div className="app-container">
             <div>Status: {connectionStatus}</div>
@@ -356,6 +361,8 @@ function App() {
                         style={{ width: '100%', height: '300px' }}
                     />
                 </div>
+
+
             ) : (
                 <div>
                     <input
@@ -365,8 +372,9 @@ function App() {
                         className="peer-input"
                     />
                     <button onClick={callPeer} disabled={callInitiated} className="call-button">
-                        Call Peer
+                        Share To
                     </button>
+
                 </div>
             )}
         </div>
