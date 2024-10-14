@@ -18,7 +18,8 @@ function App() {
     const iceCandidatesQueue = useRef([]);
     const ydocRef = useRef(null);
     const ytextRef = useRef(null);
-    const peerIdRef = useRef(''); // Added useRef for peerId
+    const peerIdRef = useRef('');
+    const connectionTimeoutRef = useRef(null);
 
     const connectSocketIO = useCallback(() => {
         socketRef.current = io('http://172.31.113.12:4444');
@@ -50,7 +51,7 @@ function App() {
         socketRef.current.on('offer', (message) => {
             console.log(`Offer received from ${message.senderId} (${message.senderUsername})`);
             setPeerId(message.senderId);
-            peerIdRef.current = message.senderId; // Update peerIdRef
+            peerIdRef.current = message.senderId;
             setPeerUsername(message.senderUsername);
             handleOffer(message);
             setCallInitiated(true);
@@ -64,7 +65,7 @@ function App() {
         });
 
         socketRef.current.on('candidate', (message) => {
-            console.log(`ICE candidate received from ${message.senderId}`);
+            console.log(`ICE candidate received from ${message.senderId}:`, JSON.stringify(message.candidate));
             handleCandidate(message);
         });
 
@@ -79,14 +80,14 @@ function App() {
 
     const sendIceCandidate = useCallback((candidate) => {
         if (socketRef.current && socketRef.current.connected && peerIdRef.current) {
-            console.log('Sending ICE candidate:', candidate);
+            console.log('Sending ICE candidate:', JSON.stringify(candidate));
             socketRef.current.emit('candidate', {
                 candidate,
                 senderId: userId,
-                receiverId: peerIdRef.current // Use peerIdRef.current
+                receiverId: peerIdRef.current
             });
         } else {
-            console.log('Queueing ICE candidate');
+            console.log('Queueing ICE candidate:', JSON.stringify(candidate));
             iceCandidatesQueue.current.push(candidate);
         }
     }, [userId]);
@@ -98,10 +99,25 @@ function App() {
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
                 {
-                    urls: 'turn:openrelay.metered.ca:80',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                }
+                    urls: "turn:global.relay.metered.ca:80",
+                    username: "9ed5150a9096f79487728504",
+                    credential: "z+RYu0NbpK7bzo6O",
+                  },
+                {
+                    urls: "turn:global.relay.metered.ca:80?transport=tcp",
+                    username: "9ed5150a9096f79487728504",
+                    credential: "z+RYu0NbpK7bzo6O",
+                },
+                {
+                    urls: "turn:global.relay.metered.ca:443",
+                    username: "9ed5150a9096f79487728504",
+                    credential: "z+RYu0NbpK7bzo6O",
+                },
+                {
+                    urls: "turns:global.relay.metered.ca:443?transport=tcp",
+                    username: "9ed5150a9096f79487728504",
+                    credential: "z+RYu0NbpK7bzo6O",
+                },
             ],
             iceTransportPolicy: 'all',
             iceCandidatePoolSize: 10
@@ -109,20 +125,26 @@ function App() {
 
         pc.onicecandidate = ({ candidate }) => {
             if (candidate) {
-                console.log('New ICE candidate:', candidate);
+                console.log('New ICE candidate:', JSON.stringify(candidate));
                 sendIceCandidate(candidate);
+            } else {
+                console.log('ICE candidate gathering completed');
             }
         };
 
         pc.oniceconnectionstatechange = () => {
             console.log('ICE connection state change:', pc.iceConnectionState);
             setConnectionStatus(pc.iceConnectionState);
+            if (pc.iceConnectionState === 'connected') {
+                clearTimeout(connectionTimeoutRef.current);
+            }
         };
 
         pc.onconnectionstatechange = () => {
             console.log('Connection state change:', pc.connectionState);
             if (pc.connectionState === 'connected') {
                 console.log('Peers connected!');
+                clearTimeout(connectionTimeoutRef.current);
             } else if (pc.connectionState === 'failed') {
                 console.error('Connection failed. Attempting to restart ICE...');
                 pc.restartIce();
@@ -136,6 +158,14 @@ function App() {
         dataChannelRef.current = pc.createDataChannel('editorChannel');
         setupDataChannelEvents();
         peerConnectionRef.current = pc;
+
+        // Set a connection timeout
+        connectionTimeoutRef.current = setTimeout(() => {
+            if (pc.iceConnectionState !== 'connected') {
+                console.log('Connection timeout. Restarting ICE...');
+                pc.restartIce();
+            }
+        }, 15000); // 15 seconds timeout
 
         return pc;
     }, [sendIceCandidate]);
@@ -183,7 +213,7 @@ function App() {
     const handleOffer = useCallback(
         ({ offer, senderId }) => {
             setPeerId(senderId);
-            peerIdRef.current = senderId; // Update peerIdRef
+            peerIdRef.current = senderId;
             const pc = createPeerConnection();
 
             pc.ondatachannel = (event) => {
@@ -192,9 +222,16 @@ function App() {
             };
 
             pc.setRemoteDescription(new RTCSessionDescription(offer))
-                .then(() => pc.createAnswer())
-                .then((answer) => pc.setLocalDescription(answer))
                 .then(() => {
+                    console.log('Remote description set (offer)');
+                    return pc.createAnswer();
+                })
+                .then((answer) => {
+                    console.log('Created answer:', JSON.stringify(answer));
+                    return pc.setLocalDescription(answer);
+                })
+                .then(() => {
+                    console.log('Local description set (answer)');
                     console.log('Sending answer');
                     socketRef.current.emit('answer', {
                         answer: pc.localDescription,
@@ -202,7 +239,7 @@ function App() {
                         receiverId: senderId
                     });
                 })
-                .catch(console.error);
+                .catch((error) => console.error('Error during offer handling:', error));
         },
         [createPeerConnection, userId]
     );
@@ -211,9 +248,9 @@ function App() {
         const pc = peerConnectionRef.current;
         pc.setRemoteDescription(new RTCSessionDescription(answer))
             .then(() => {
-                console.log('Remote description set successfully');
+                console.log('Remote description set successfully (answer)');
             })
-            .catch(console.error);
+            .catch((error) => console.error('Error setting remote description:', error));
     }, []);
 
     const handleCandidate = useCallback(({ candidate }) => {
@@ -233,14 +270,16 @@ function App() {
             alert('Please enter a peer ID or username');
             return;
         }
-        peerIdRef.current = peerId; // Update peerIdRef when calling
+        peerIdRef.current = peerId;
         const pc = createPeerConnection();
 
         pc.createOffer()
             .then((offer) => {
+                console.log('Created offer:', JSON.stringify(offer));
                 return pc.setLocalDescription(offer);
             })
             .then(() => {
+                console.log('Local description set (offer)');
                 console.log('Sending offer');
                 socketRef.current.emit('offer', {
                     offer: pc.localDescription,
@@ -248,7 +287,7 @@ function App() {
                     receiverId: peerId
                 });
             })
-            .catch(console.error);
+            .catch((error) => console.error('Error during call initiation:', error));
 
         setCallInitiated(true);
     }, [createPeerConnection, userId, peerId]);
@@ -265,8 +304,16 @@ function App() {
 
     useEffect(() => {
         connectSocketIO();
+        
+        // Log network information
+        if (navigator.connection) {
+            console.log('Network type:', navigator.connection.type);
+            console.log('Effective network type:', navigator.connection.effectiveType);
+        }
+
         return () => {
             console.log('Cleaning up Socket.IO and peer connection');
+            clearTimeout(connectionTimeoutRef.current);
             peerConnectionRef.current?.close();
             socketRef.current?.disconnect();
             if (ydocRef.current) {
@@ -283,11 +330,11 @@ function App() {
             iceCandidatesQueue.current.length > 0
         ) {
             iceCandidatesQueue.current.forEach((candidate) => {
-                console.log('Sending queued ICE candidate:', candidate);
+                console.log('Sending queued ICE candidate:', JSON.stringify(candidate));
                 socketRef.current.emit('candidate', {
                     candidate,
                     senderId: userId,
-                    receiverId: peerIdRef.current // Use peerIdRef.current
+                    receiverId: peerIdRef.current
                 });
             });
             iceCandidatesQueue.current = [];
