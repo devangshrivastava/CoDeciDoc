@@ -1,15 +1,32 @@
 const express = require('express');
+const connectDB = require("./config/db");
 const cors = require('cors');
 const http = require('http');
-require('dotenv').config();
-
+const dotenv = require("dotenv");
+const userRoutes = require("./routes/userRoutes");
 const { Server } = require('socket.io');
+const { notFound, errorHandler } = require("./middleware/errorMiddleware");
+dotenv.config();
 
-const port = 4444;
-const host = '172.31.113.12';
+// console.log(check);
+
+const port = process.env.PORT;
+const host = process.env.HOST;
+
+const DATABASE_URL = process.env.DATABASE_URL; 
+connectDB(DATABASE_URL); // Connect to MongoDB
 
 const app = express();
+
+app.use(express.json()); // Parse JSON bodies
 app.use(cors());
+
+app.use("/api/user", userRoutes);
+
+
+app.use(notFound); // Handles 404 errors (Not Found)
+app.use(errorHandler);
+
 
 const server = http.createServer(app);
 
@@ -20,14 +37,15 @@ const io = new Server(server, {
     }
 });
 
-const clients = new Map(); // Store clients by their userId (sockets)
-const usernames = new Map(); // Store usernames by their userId
-const usernameToId = new Map(); // Store userId by username
+const clients = new Map(); 
+const usernames = new Map(); 
+const usernameToId = new Map(); 
 
 io.on('connection', (socket) => {
     let clientId = null;
 
     socket.on('register', (message) => {
+        
         clientId = message.userId;
         clients.set(clientId, socket);
         console.log(`Client registered: ${clientId}`);
