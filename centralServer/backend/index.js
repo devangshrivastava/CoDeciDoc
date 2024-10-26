@@ -6,171 +6,126 @@ const dotenv = require("dotenv");
 const userRoutes = require("./routes/userRoutes");
 const { Server } = require('socket.io');
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
-dotenv.config();
 
-// console.log(check);
+dotenv.config();
 
 const port = process.env.PORT;
 const host = process.env.HOST;
+const DATABASE_URL = process.env.DATABASE_URL;
 
-const DATABASE_URL = process.env.DATABASE_URL; 
-connectDB(DATABASE_URL); // Connect to MongoDB
+connectDB(DATABASE_URL);
 
 const app = express();
-
-app.use(express.json()); // Parse JSON bodies
+app.use(express.json());
 app.use(cors());
-
 app.use("/api/user", userRoutes);
-
-
-app.use(notFound); // Handles 404 errors (Not Found)
+app.use(notFound);
 app.use(errorHandler);
 
-
 const server = http.createServer(app);
-
 const io = new Server(server, {
-    cors: {
-        origin: '*', // Replace with your client's origin if needed
-        methods: ['GET', 'POST']
-    }
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
 });
 
-const clients = new Map(); 
-const usernames = new Map(); 
-const usernameToId = new Map(); 
+const userToSocket = new Map();
 
 io.on('connection', (socket) => {
-    let clientId = null;
+  let userEmail = null;
 
-    socket.on('register', (message) => {
+  socket.on('register', (message) => {
+    userEmail = message.userEmail;
+    userToSocket.set(userEmail, socket);
+    console.log(`User registered: ${userEmail}`);
         
-        clientId = message.userId;
-        clients.set(clientId, socket);
-        console.log(`Client registered: ${clientId}`);
-
-        // Ask for username
-        socket.emit('requestUsername');
+    socket.emit('registerSuccess', {
+      username: userEmail
     });
+  });
 
-    socket.on('setUsername', (message) => {
-        if (clientId) {
-            const username = message.username;
-            usernames.set(clientId, username);
-            usernameToId.set(username, clientId);
-            console.log(`Username set for ${clientId}: ${username}`);
+  socket.on('offer', (message) => {
+    handleOffer(message, socket);
+  });
 
-            // Send registration success response back to the client
-            socket.emit('registerSuccess', {
-                userId: clientId,
-                username: username
-            });
-        }
-    });
+  socket.on('answer', (message) => {
+    handleAnswer(message, socket);
+  });
 
-    socket.on('offer', (message) => {
-        handleOffer(message, clientId, socket);
-    });
+  socket.on('candidate', (message) => {
+    handleCandidate(message, socket);
+  });
 
-    socket.on('answer', (message) => {
-        handleAnswer(message, clientId, socket);
-    });
+  socket.on('disconnect', () => {
+    if (userEmail) {
+      userToSocket.delete(userEmail);
+      console.log(`User disconnected: ${userEmail}`);
+    }
+  });
 
-    socket.on('candidate', (message) => {
-        handleCandidate(message, clientId, socket);
-    });
-
-    socket.on('disconnect', () => {
-        if (clientId) {
-            const username = usernames.get(clientId);
-            clients.delete(clientId);
-            usernames.delete(clientId);
-            usernameToId.delete(username);
-            console.log(`Client disconnected: ${clientId} (${username})`);
-        }
-    });
-
-    socket.on('error', (error) => {
-        console.error(`Socket error for client ${clientId || 'unknown'}:`, error);
-    });
+  socket.on('error', (error) => {
+    console.error(`Socket error for user ${userEmail || 'unknown'}:`, error);
+  });
 });
 
-function forwardMessage(message, clientId, socket, messageType) {
-    let targetId = message.receiverId;
+function forwardMessage(message, socket, messageType) {
+  const { senderEmail, receiverEmail } = message;
 
-    // If receiverId is not a valid UUID, assume it's a username and get the corresponding ID
-    if (!isValidUUID(targetId)) {
-        targetId = usernameToId.get(targetId);
-    }
+  console.log(`Attempting to forward ${messageType} from ${senderEmail} to ${receiverEmail}`);
 
-    console.log(`Attempting to forward ${messageType} from ${usernames.get(clientId)} to ${usernames.get(targetId)}`);
-
-    const targetClient = clients.get(targetId);
-    if (targetClient) {
-        console.log(`Successfully forwarding ${messageType} from ${usernames.get(clientId)} to ${usernames.get(targetId)}`);
-        targetClient.emit(messageType, {
-            ...message,
-            senderId: clientId,
-            senderUsername: usernames.get(clientId),
-            receiverId: targetId,
-            receiverUsername: usernames.get(targetId)
-        });
-    } else {
-        console.error(`Receiver ${targetId} not found or connection is closed. Client map size: ${clients.size}`);
-        console.log(`Current clients in map: ${Array.from(clients.keys()).join(', ')}`);
-
-        // Send error message back to sender
-        socket.emit('errorMessage', {
-            message: `User ${message.receiverId} not found or offline.`
-        });
-    }
+  const receiverSocket = userToSocket.get(receiverEmail);
+  if (receiverSocket) {
+    console.log(`Successfully forwarding ${messageType} from ${senderEmail} to ${receiverEmail}`);
+    receiverSocket.emit(messageType, {
+      ...message,
+      senderEmail,
+      receiverEmail
+    });
+  } else {
+    console.error(`Receiver ${receiverEmail} not found or connection is closed. Active users: ${userToSocket.size}`);
+    socket.emit('errorMessage', {
+      message: `User ${receiverEmail} not found or offline.`
+    });
+  }
 }
 
-// Function to handle 'offer' messages
-function handleOffer(message, clientId, socket) {
-    if (!message.offer || !message.receiverId) {
-        console.error(`Invalid offer message from ${clientId}`);
-        socket.emit('errorMessage', {
-            message: `Invalid offer message. Missing 'offer' or 'receiverId'.`
-        });
-        return;
-    }
+function handleOffer(message, socket) {
+  if (!message.offer || !message.receiverEmail) {
+    console.error(`Invalid offer message from ${message.senderEmail}`);
+    socket.emit('errorMessage', {
+      message: `Invalid offer message. Missing 'offer' or 'receiverEmail'.`
+    });
+    return;
+  }
 
-    forwardMessage(message, clientId, socket, 'offer');
+  forwardMessage(message, socket, 'offer');
 }
 
-// Function to handle 'answer' messages
-function handleAnswer(message, clientId, socket) {
-    if (!message.answer || !message.receiverId) {
-        console.error(`Invalid answer message from ${clientId}`);
-        socket.emit('errorMessage', {
-            message: `Invalid answer message. Missing 'answer' or 'receiverId'.`
-        });
-        return;
-    }
+function handleAnswer(message, socket) {
+  if (!message.answer || !message.receiverEmail) {
+    console.error(`Invalid answer message from ${message.senderEmail}`);
+    socket.emit('errorMessage', {
+      message: `Invalid answer message. Missing 'answer' or 'receiverEmail'.`
+    });
+    return;
+  }
 
-    forwardMessage(message, clientId, socket, 'answer');
+  forwardMessage(message, socket, 'answer');
 }
 
-// Function to handle 'candidate' messages
-function handleCandidate(message, clientId, socket) {
-    if (!message.candidate || !message.receiverId) {
-        console.error(`Invalid candidate message from ${clientId}`);
-        socket.emit('errorMessage', {
-            message: `Invalid candidate message. Missing 'candidate' or 'receiverId'.`
-        });
-        return;
-    }
+function handleCandidate(message, socket) {
+  if (!message.candidate || !message.receiverEmail) {
+    console.error(`Invalid candidate message from ${message.senderEmail}`);
+    socket.emit('errorMessage', {
+      message: `Invalid candidate message. Missing 'candidate' or 'receiverEmail'.`
+    });
+    return;
+  }
 
-    forwardMessage(message, clientId, socket, 'candidate');
-}
-
-function isValidUUID(uuid) {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    return uuidRegex.test(uuid);
+  forwardMessage(message, socket, 'candidate');
 }
 
 server.listen(port, host, () => {
-    console.log(`Server listening at http://${host}:${port}`);
+  console.log(`Server listening at http://${host}:${port}`);
 });
