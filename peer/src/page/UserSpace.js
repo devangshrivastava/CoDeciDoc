@@ -324,6 +324,7 @@ function UserSpace() {
     }
   }, [userEmail]);
 
+  
   return (
     <div className="app-container">
       <div>Status: {connectionStatus}</div>
