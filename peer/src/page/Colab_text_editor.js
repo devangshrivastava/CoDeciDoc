@@ -22,7 +22,7 @@ function App() {
     const connectionTimeoutRef = useRef(null);
 
     const connectSocketIO = useCallback(() => {
-        socketRef.current = io('http://172.31.113.12:4444');
+        socketRef.current = io('http://localhost:4444');
 
         socketRef.current.on('connect', () => {
             console.log('Socket.IO connected');

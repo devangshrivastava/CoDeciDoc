@@ -3,26 +3,44 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import * as Y from 'yjs';
 import './App.css';
+import { useParams } from 'react-router-dom';
+import axios from 'axios';
 
-function UserSpace() {
+
+function Editor() {
   const [peerEmail, setPeerEmail] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('Disconnected');
   const [callInitiated, setCallInitiated] = useState(false);
   const [text, setText] = useState('');
+
+  const [collaborators, setCollaborators] = useState([]); // For listing current collaborators
+  const [newCollaboratorEmail, setNewCollaboratorEmail] = useState(''); // For adding a new collaborator
+  
+
   const peerConnectionRef = useRef(null);
   const socketRef = useRef(null);
   const dataChannelRef = useRef(null);
   const iceCandidatesQueue = useRef([]);
-  const ydocRef = useRef(null);
-  const ytextRef = useRef(null);
+  const ydocRef = useRef(new Y.Doc()); // Initialize Yjs document immediately
+  const ytextRef = useRef(ydocRef.current.getText('shared')); // Shared text in Yjs
   const peerEmailRef = useRef('');
   const connectionTimeoutRef = useRef(null);
   const { user } = ChatState();
-  const userEmail = user.email;
+  const userEmail = user?.email;
+  const { id } = useParams();
+  const {token} = ChatState();
 
+
+  // Prevent further execution if user is not yet loaded
+
+  
+  
   const connectSocketIO = useCallback(() => {
+    if (!userEmail) return;
+    if(!collaborators) return;
+    // socketRef.current = io('http://172.31.104.87:4444');
     socketRef.current = io('http://localhost:4444');
-
+    
     socketRef.current.on('connect', () => {
       console.log('Socket.IO connected');
       socketRef.current.emit('register', { userEmail });
@@ -34,12 +52,27 @@ function UserSpace() {
       setConnectionStatus('Disconnected');
     });
 
-    socketRef.current.on('registerSuccess', (message) => {
+    socketRef.current.on('registerSuccess', () => {
       console.log('Registration successful');
       setConnectionStatus('Registered');
     });
 
     socketRef.current.on('offer', (message) => {
+
+      const { senderEmail, documentId } = message;
+      const isAuthorized =
+        userEmail === senderEmail || // Owner of the document
+        collaborators.some(collab => collab.email === senderEmail);
+
+        if (!isAuthorized) {
+          socketRef.current.emit('authorizationError', {
+            message: 'Not an authorized user',
+            senderEmail,
+          });
+          console.log('User not authorized');
+          return;
+        }
+
       console.log(`Offer received from ${message.senderEmail}`);
       setPeerEmail(message.senderEmail);
       peerEmailRef.current = message.senderEmail;
@@ -162,11 +195,10 @@ function UserSpace() {
   const setupDataChannelEvents = () => {
     dataChannelRef.current.onopen = () => {
       console.log('Data channel is open');
-      initializeYjs();
+      syncInitialText(); // Send initial text to the peer
     };
 
     dataChannelRef.current.onmessage = (event) => {
-      console.log('Data channel message received:', event.data);
       const data = JSON.parse(event.data);
       if (data.type === 'yjsUpdate') {
         Y.applyUpdate(ydocRef.current, new Uint8Array(data.update));
@@ -176,30 +208,15 @@ function UserSpace() {
     dataChannelRef.current.onclose = () => {
       console.log('Data channel is closed');
     };
-
-    dataChannelRef.current.onerror = (error) => {
-      console.error('Data channel error:', error);
-    };
   };
 
-  const initializeYjs = () => {
-    ydocRef.current = new Y.Doc();
-    ytextRef.current = ydocRef.current.getText('shared');
-
-    ytextRef.current.observe(() => {
-      setText(ytextRef.current.toString());
-    });
-
-    ydocRef.current.on('update', (update) => {
-      if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
-        dataChannelRef.current.send(
-          JSON.stringify({
-            type: 'yjsUpdate',
-            update: Array.from(update)
-          })
-        );
-      }
-    });
+  const syncInitialText = () => {
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      const initialUpdate = Y.encodeStateAsUpdate(ydocRef.current);
+      dataChannelRef.current.send(
+        JSON.stringify({ type: 'yjsUpdate', update: Array.from(initialUpdate) })
+      );
+    }
   };
 
   const handleOffer = useCallback(({ offer, senderEmail }) => {
@@ -213,17 +230,9 @@ function UserSpace() {
     };
 
     pc.setRemoteDescription(new RTCSessionDescription(offer))
+      .then(() => pc.createAnswer())
+      .then((answer) => pc.setLocalDescription(answer))
       .then(() => {
-        console.log('Remote description set (offer)');
-        return pc.createAnswer();
-      })
-      .then((answer) => {
-        console.log('Created answer:', JSON.stringify(answer));
-        return pc.setLocalDescription(answer);
-      })
-      .then(() => {
-        console.log('Local description set (answer)');
-        console.log('Sending answer');
         socketRef.current.emit('answer', {
           answer: pc.localDescription,
           senderEmail: userEmail,
@@ -273,7 +282,8 @@ function UserSpace() {
         socketRef.current.emit('offer', {
           offer: pc.localDescription,
           senderEmail: userEmail,
-          receiverEmail: peerEmailRef.current
+          receiverEmail: peerEmailRef.current,
+          documentId: id
         });
       })
       .catch((error) => console.error('Error during call initiation:', error));
@@ -284,28 +294,27 @@ function UserSpace() {
   const handleTextChange = (e) => {
     const newText = e.target.value;
     setText(newText);
-
-    if (ytextRef.current){
-      ytextRef.current.delete(0, ytextRef.current.length);
-      ytextRef.current.insert(0, newText);
-    }
+    ytextRef.current.delete(0, ytextRef.current.length);
+    ytextRef.current.insert(0, newText);
   };
 
   useEffect(() => {
+    ytextRef.current.observe(() => {
+      setText(ytextRef.current.toString());
+    });
+
     connectSocketIO();
-    
+
     return () => {
-      console.log('Cleaning up Socket.IO and peer connection');
       clearTimeout(connectionTimeoutRef.current);
       peerConnectionRef.current?.close();
       socketRef.current?.disconnect();
-      if (ydocRef.current) {
-        ydocRef.current.destroy();
-      }
+      ydocRef.current.destroy();
     };
   }, [connectSocketIO]);
 
   useEffect(() => {
+    if (!userEmail) return;
     if (
       socketRef.current &&
       socketRef.current.connected &&
@@ -324,40 +333,104 @@ function UserSpace() {
     }
   }, [userEmail]);
 
-  
+
+  useEffect(() => {
+    if (!userEmail) return;
+    // console.log('Fetching collaborators...');
+    const fetchCollaborators = async () => {
+      try {
+
+        const config = {
+          headers: {
+            Authorization: `Bearer ${user.token}`, // Include the token in the Authorization header
+          },
+        };  
+
+        const { data } = await axios.get(`/api/document/${id}`, config); // Update the endpoint as needed
+        setCollaborators(data.collaborators);
+        console.log('Collaborators:', data.collaborators);
+        
+      } catch (error) {
+        console.error('Error fetching collaborators:', error);
+      }
+    };
+    
+    fetchCollaborators();
+  }, [id, userEmail]);
+
+  const addCollaborator = async () => {
+    try {
+
+      const config = {
+        headers: {
+          Authorization: `Bearer ${user.token}`, // Include the token in the Authorization header
+        },
+      };  
+
+      const { data } = await axios.put(`/api/document/${id}/collaborator`, {
+        collaborator: newCollaboratorEmail,
+        },
+        config
+      );
+      
+      setCollaborators(data.collaborators);
+      setNewCollaboratorEmail('');
+    } catch (error) {
+      console.error('Error adding collaborator:', error);
+      alert(error.response?.data?.message || 'Failed to add collaborator');
+    }
+  };
+
+  if (!user) {
+    return <div>Loading...</div>; // Show loading indicator only in the render phase
+  }
+
   return (
     <div className="app-container">
       <div>Status: {connectionStatus}</div>
       <div>Your Email: {userEmail}</div>
-      {callInitiated ? (
-        <div>
-          <p>{`Connected with ${peerEmail}`}</p>
-          <textarea
-            value={text}
-            onChange={handleTextChange}
-            placeholder="Start typing..."
-            style={{ width: '100%', height: '300px' }}
-          />
-        </div>
-      ) : (
-        <div>
-          <input
-            value={peerEmail}
-            onChange={(e) => setPeerEmail(e.target.value)}
-            placeholder="Enter peer email"
-            className="peer-input"
-          />
-          <button 
-            onClick={callPeer} 
-            disabled={callInitiated} 
-            className="call-button"
-          >
-            Share To
-          </button>
-        </div>
-      )}
+      <div>
+        <input
+          value={peerEmail}
+          onChange={(e) => setPeerEmail(e.target.value)}
+          placeholder="Enter peer email"
+          className="peer-input"
+        />
+        <button 
+          onClick={callPeer} 
+          disabled={callInitiated} 
+          className="call-button"
+        >
+          Connect
+        </button>
+      </div>
+
+      <textarea
+        value={text}
+        onChange={handleTextChange}
+        placeholder="Start typing..."
+        style={{ width: '100%', height: '300px' }}
+      />
+
+      {/* Collaborator Section */}
+      <div className="collaborator-section">
+        <h3>Shared With:</h3>
+        <ul>
+          {collaborators.map((collaborator) => (
+            <li key={collaborator.userId.toString()}>{collaborator.email}</li>
+          ))}
+        </ul>
+
+        <input
+          type="email"
+          value={newCollaboratorEmail}
+          onChange={(e) => setNewCollaboratorEmail(e.target.value)}
+          placeholder="Add collaborator email"
+        />
+        <button onClick={addCollaborator}>Add Collaborator</button>
+      </div>
     </div>
   );
 }
 
-export default UserSpace;
+export default Editor;

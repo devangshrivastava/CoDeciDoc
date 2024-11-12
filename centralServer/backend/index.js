@@ -4,6 +4,7 @@ const cors = require('cors');
 const http = require('http');
 const dotenv = require("dotenv");
 const userRoutes = require("./routes/userRoutes");
+const documentRoutes = require("./routes/documentRoutes");
 const { Server } = require('socket.io');
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
@@ -19,6 +20,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 app.use("/api/user", userRoutes);
+app.use("/api/document", documentRoutes);
+
 app.use(notFound);
 app.use(errorHandler);
 
@@ -35,11 +38,9 @@ const userToSocket = new Map();
 io.on('connection', (socket) => {
   let userEmail = null;
 
-  socket.on('register', (message) => {
-    userEmail = message.userEmail;
+  socket.on('register', ({userEmail}) => {
     userToSocket.set(userEmail, socket);
     console.log(`User registered: ${userEmail}`);
-        
     socket.emit('registerSuccess', {
       username: userEmail
     });

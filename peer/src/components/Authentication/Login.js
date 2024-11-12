@@ -55,9 +55,12 @@ const Login = () => {
         position: "bottom",
       });
       // setUser(data);
+      console.log(data);
+      const token = data.token;
+      sessionStorage.setItem("jwt", token);
       localStorage.setItem("userInfo", JSON.stringify(data));
       setLoading(false);
-      navigate("/userspace");
+      navigate("/manage-docs");
     } catch (error) {
       toast({
         title: "Error Occured!",

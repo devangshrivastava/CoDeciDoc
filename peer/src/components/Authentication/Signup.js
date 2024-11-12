@@ -68,7 +68,7 @@ const Signup = () => {
 
       localStorage.setItem("userInfo", JSON.stringify(data));
       setLoading(false);
-      navigate("/userspace");
+      navigate("/manage-docs");
     } catch (error) {
       toast({
         title: "Error",
