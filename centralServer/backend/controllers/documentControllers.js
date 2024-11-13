@@ -7,16 +7,17 @@ const mongoose = require('mongoose');
 
 const createDocument = async_handler(async (req, res) => {
     try {
-        const { title, user } = req.body;
+        const { title, user, content } = req.body;
 
         const document = await Document.create({
             owner: new mongoose.Types.ObjectId(String(user._id)), 
             title: title,
+            content: content,
         });
 
         if (document) {
             res.status(201).json(document);
-            console.log(`Document created successfully by ${user.name} with title ${title}`);
+            // console.log(`Document created successfully by ${user.name} with title ${title}`);
         } else {
             res.status(400).json({ error: 'Failed to create document, please try again' });
         }

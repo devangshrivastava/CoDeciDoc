@@ -15,7 +15,8 @@ function Editor() {
 
   const [collaborators, setCollaborators] = useState([]); // For listing current collaborators
   const [newCollaboratorEmail, setNewCollaboratorEmail] = useState(''); // For adding a new collaborator
-  
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(''); // For showing save status messages
 
   const peerConnectionRef = useRef(null);
   const socketRef = useRef(null);
@@ -59,25 +60,31 @@ function Editor() {
 
     socketRef.current.on('offer', (message) => {
 
-      const { senderEmail, documentId } = message;
+      const { senderEmail} = message;
       const isAuthorized =
         userEmail === senderEmail || // Owner of the document
         collaborators.some(collab => collab.email === senderEmail);
 
-        if (!isAuthorized) {
-          socketRef.current.emit('authorizationError', {
-            message: 'Not an authorized user',
-            senderEmail,
-          });
-          console.log('User not authorized');
-          return;
-        }
+        // if (!isAuthorized) {
+        //   socketRef.current.emit('authorizationError', {
+        //     message: 'Not an authorized user',
+        //     senderEmail: userEmail,
+        //     receiverEmail: senderEmail
+        //   });
+        //   console.log('User not authorized');
+        //   return;
+        // }
 
       console.log(`Offer received from ${message.senderEmail}`);
       setPeerEmail(message.senderEmail);
       peerEmailRef.current = message.senderEmail;
       handleOffer(message);
       setCallInitiated(true);
+    });
+
+    socketRef.current.on('authorizationError', (message) => {
+      alert('You are not authorized to access this document');
+      console.error('Authorization error:', message.message);
     });
 
     socketRef.current.on('answer', (message) => {
@@ -114,6 +121,9 @@ function Editor() {
       iceCandidatesQueue.current.push(candidate);
     }
   }, [userEmail]);
+
+
+
 
   const createPeerConnection = useCallback(() => {
     console.log('Creating peer connection');
@@ -193,29 +203,99 @@ function Editor() {
   }, [sendIceCandidate]);
 
   const setupDataChannelEvents = () => {
+    if (!dataChannelRef.current) return;
+
     dataChannelRef.current.onopen = () => {
       console.log('Data channel is open');
-      syncInitialText(); // Send initial text to the peer
+      
+      // Set up Yjs awareness and update handlers
+      ydocRef.current.on('update', (update) => {
+        if (dataChannelRef.current?.readyState === 'open') {
+          console.log('Sending Yjs update:', update);
+          dataChannelRef.current.send(
+            JSON.stringify({
+              type: 'yjsUpdate',
+              update: Array.from(update)
+            })
+          );
+        }
+      });
+
+      // Send initial state when connection opens
+      const initialUpdate = Y.encodeStateAsUpdate(ydocRef.current);
+      dataChannelRef.current.send(
+        JSON.stringify({
+          type: 'yjsUpdate',
+          update: Array.from(initialUpdate)
+        })
+      );
     };
 
     dataChannelRef.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'yjsUpdate') {
-        Y.applyUpdate(ydocRef.current, new Uint8Array(data.update));
+      console.log('Received message:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'yjsUpdate') {
+          // Convert array back to Uint8Array
+          const update = new Uint8Array(data.update);
+          Y.applyUpdate(ydocRef.current, update);
+          
+          // Update the text state to reflect changes
+          setText(ytextRef.current.toString());
+        }
+      } catch (error) {
+        console.error('Error processing received message:', error);
       }
     };
 
     dataChannelRef.current.onclose = () => {
-      console.log('Data channel is closed');
+      console.log('Data channel closed');
+    };
+
+    dataChannelRef.current.onerror = (error) => {
+      console.error('Data channel error:', error);
     };
   };
 
-  const syncInitialText = () => {
-    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
-      const initialUpdate = Y.encodeStateAsUpdate(ydocRef.current);
-      dataChannelRef.current.send(
-        JSON.stringify({ type: 'yjsUpdate', update: Array.from(initialUpdate) })
-      );
+  // const syncInitialText = () => {
+  //   if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+  //     const initialUpdate = Y.encodeStateAsUpdate(ydocRef.current);
+  //     dataChannelRef.current.send(
+  //       JSON.stringify({ type: 'yjsUpdate', update: Array.from(initialUpdate) })
+  //     );
+  //   }
+  // };
+
+  const handleSave = async () => {
+    if (!text.trim()) {
+      setSaveStatus('Nothing to save');
+      setTimeout(() => setSaveStatus(''), 3000);
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveStatus('Saving...');
+
+    try {
+      const config = {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.token}`,
+        },
+      };
+
+      await axios.put(`/api/document/${id}`, {
+        content: text
+      }, config);
+
+      setSaveStatus('Saved successfully!');
+      setTimeout(() => setSaveStatus(''), 3000);
+    } catch (error) {
+      console.error('Error saving document:', error);
+      setSaveStatus(error.response?.data?.message || 'Error saving document');
+      setTimeout(() => setSaveStatus(''), 5000);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -294,24 +374,42 @@ function Editor() {
   const handleTextChange = (e) => {
     const newText = e.target.value;
     setText(newText);
-    ytextRef.current.delete(0, ytextRef.current.length);
-    ytextRef.current.insert(0, newText);
+    // if (ytextRef.current) {
+      ytextRef.current.delete(0, ytextRef.current.length);
+      ytextRef.current.insert(0, newText);
+    // }
   };
 
   useEffect(() => {
-    ytextRef.current.observe(() => {
-      setText(ytextRef.current.toString());
-    });
+    // Initialize Yjs observers
+    const observer = () => {
+      const newText = ytextRef.current.toString();
+      if (text !== newText) {
+        setText(newText);
+      }
+    };
 
+    ytextRef.current.observe(observer);
+
+    // Set up WebRTC connection
     connectSocketIO();
 
     return () => {
+      ytextRef.current.unobserve(observer);
       clearTimeout(connectionTimeoutRef.current);
-      peerConnectionRef.current?.close();
-      socketRef.current?.disconnect();
+      if (dataChannelRef.current) {
+        dataChannelRef.current.close();
+      }
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+      }
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
       ydocRef.current.destroy();
     };
   }, [connectSocketIO]);
+
 
   useEffect(() => {
     if (!userEmail) return;
@@ -336,10 +434,8 @@ function Editor() {
 
   useEffect(() => {
     if (!userEmail) return;
-    // console.log('Fetching collaborators...');
     const fetchCollaborators = async () => {
       try {
-
         const config = {
           headers: {
             Authorization: `Bearer ${user.token}`, // Include the token in the Authorization header
@@ -347,6 +443,7 @@ function Editor() {
         };  
 
         const { data } = await axios.get(`/api/document/${id}`, config); // Update the endpoint as needed
+        setText(data.content);
         setCollaborators(data.collaborators);
         console.log('Collaborators:', data.collaborators);
         
@@ -405,12 +502,42 @@ function Editor() {
         </button>
       </div>
 
-      <textarea
-        value={text}
-        onChange={handleTextChange}
-        placeholder="Start typing..."
-        style={{ width: '100%', height: '300px' }}
-      />
+      <div className="editor-container" style={{ position: 'relative', marginTop: '20px' }}>
+        <textarea
+          value={text}
+          onChange={handleTextChange}
+          placeholder="Start typing..."
+          style={{ width: '100%', height: '300px', marginBottom: '10px' }}
+        />
+        
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: isSaving ? '#ccc' : '#4CAF50',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: isSaving ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isSaving ? 'Saving...' : 'Save Document'}
+          </button>
+          
+          {saveStatus && (
+            <div
+              style={{
+                marginLeft: '10px',
+                color: saveStatus.includes('Error') ? '#f44336' : '#4CAF50',
+              }}
+            >
+              {saveStatus}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Collaborator Section */}
       <div className="collaborator-section">

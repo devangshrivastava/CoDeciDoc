@@ -15,8 +15,8 @@ const ManageDocument = () => {
         e.preventDefault();
         try {
             
-            
-            const response = await axios.post('/api/document/', { title, user }, {
+            let content = "";
+            const response = await axios.post('/api/document/', { title, user, content}, {
                 headers: {
                     Authorization: `Bearer ${token}`
                 }

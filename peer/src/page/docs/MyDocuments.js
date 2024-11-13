@@ -34,7 +34,7 @@ const MyDocuments = () => {
     };
 
     fetchDocuments();
-  }, []);
+  }, [userEmail]);
 
   if (!userEmail) return <div>Loading...</div>;
 

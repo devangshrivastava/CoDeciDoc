@@ -58,6 +58,10 @@ io.on('connection', (socket) => {
     handleCandidate(message, socket);
   });
 
+  socket.on('authorizationError', (message) => {
+    handleAuthorizationError(message, socket);
+  });
+
   socket.on('disconnect', () => {
     if (userEmail) {
       userToSocket.delete(userEmail);
@@ -125,6 +129,18 @@ function handleCandidate(message, socket) {
   }
 
   forwardMessage(message, socket, 'candidate');
+}
+
+function handleAuthorizationError(message, socket) {
+  if (!message.receiverEmail) {
+    console.error(`Invalid authorization error message from ${message.senderEmail}`);
+    socket.emit('errorMessage', {
+      message: `Invalid authorization error message. Missing 'receiverEmail'.`
+    });
+    return;
+  }
+
+  forwardMessage(message, socket, 'authorizationError');
 }
 
 server.listen(port, host, () => {

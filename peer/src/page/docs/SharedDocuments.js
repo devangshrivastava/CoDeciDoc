@@ -35,7 +35,7 @@ const SharedDocuments = () => {
     };
 
     fetchDocuments();
-  }, []);
+  }, [userEmail]);
 
   if (!userEmail) return <div>Loading...</div>;
 
