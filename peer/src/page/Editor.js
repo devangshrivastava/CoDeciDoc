@@ -5,6 +5,8 @@ import * as Y from 'yjs';
 import './App.css';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
+import { iceServers, SOCKET_URL } from '../config/config';
+// import { createPeerConnection } from '../utils/peerConnetion';
 
 
 function Editor() {
@@ -29,7 +31,6 @@ function Editor() {
   const { user } = ChatState();
   const userEmail = user?.email;
   const { id } = useParams();
-  const {token} = ChatState();
 
 
   // Prevent further execution if user is not yet loaded
@@ -40,7 +41,7 @@ function Editor() {
     if (!userEmail) return;
     if(!collaborators) return;
     // socketRef.current = io('http://172.31.104.87:4444');
-    socketRef.current = io('http://localhost:4444');
+    socketRef.current = io(SOCKET_URL);
     
     socketRef.current.on('connect', () => {
       console.log('Socket.IO connected');
@@ -128,30 +129,7 @@ function Editor() {
   const createPeerConnection = useCallback(() => {
     console.log('Creating peer connection');
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        {
-          urls: "turn:global.relay.metered.ca:80",
-          username: "9ed5150a9096f79487728504",
-          credential: "z+RYu0NbpK7bzo6O",
-        },
-        {
-          urls: "turn:global.relay.metered.ca:80?transport=tcp",
-          username: "9ed5150a9096f79487728504",
-          credential: "z+RYu0NbpK7bzo6O",
-        },
-        {
-          urls: "turn:global.relay.metered.ca:443",
-          username: "9ed5150a9096f79487728504",
-          credential: "z+RYu0NbpK7bzo6O",
-        },
-        {
-          urls: "turns:global.relay.metered.ca:443?transport=tcp",
-          username: "9ed5150a9096f79487728504",
-          credential: "z+RYu0NbpK7bzo6O",
-        },
-      ],
+      iceServers,
       iceTransportPolicy: 'all',
       iceCandidatePoolSize: 10
     });

@@ -8,7 +8,7 @@ import { ChakraProvider } from '@chakra-ui/react'
 import ChatProvider from './context/ChatProvider';
 import ManageDocs from './page/ManageDocs';
 import MyDocuments from './page/docs/MyDocuments';
-import NewDocument from './page/docs/NewDocument';
+// import NewDocument from './page/docs/NewDocument';
 import SharedDocuments from './page/docs/SharedDocuments';
 import Editor from './page/Editor';
 
@@ -25,7 +25,7 @@ function App() {
               <Route path="/:id" element={<Colab_text_editor />} /> 
               <Route path="/manage-docs" element={<ManageDocs />} />
               <Route path="/my-documents" element={<MyDocuments />} />
-              <Route path="/new-document" element={<NewDocument />} />
+              {/* <Route path="/new-document" element={<NewDocument />} /> */}
               <Route path="/shared-documents" element={<SharedDocuments />} />
               <Route path="/editor/:id" element={<Editor />} />
             </Routes>

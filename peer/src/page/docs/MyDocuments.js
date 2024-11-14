@@ -39,28 +39,38 @@ const MyDocuments = () => {
   if (!userEmail) return <div>Loading...</div>;
 
   return (
-    <div className="p-6">
-      <div className="flex items-center mb-6">
-        <Link to="/manage-docs" className="text-blue-600 hover:text-blue-800 mr-4">
-          ← Back to Home
+    <div className="p-8 bg-gray-50 min-h-screen">
+    {/* Header Section with Navigation */}
+    <div className="flex items-center mb-8">
+        <Link to="/manage-docs" className="text-blue-600 hover:text-blue-800 mr-6 text-lg">
+            ← Back to Home
         </Link>
-        <h1 className="text-2xl font-bold">My Documents</h1>
-      </div>
-
-      <ul>
-        {documents.length > 0 ? (
-          documents.map((doc) => (
-            <li key={doc._id} className="mb-4">
-              <Link to={`/editor/${doc._id}`} className="text-blue-600 hover:text-blue-800">
-                {doc.title || 'Untitled Document'}
-              </Link>
-            </li>
-          ))
-        ) : (
-          <p>No documents found.</p>
-        )}
-      </ul>
+        <h1 className="text-3xl font-bold text-gray-800">
+            My Documents
+        </h1>
     </div>
+
+    {/* Document List */}
+    <div className="bg-white rounded-lg shadow-md p-6">
+        {documents.length > 0 ? (
+            <ul className="divide-y divide-gray-200">
+                {documents.map((doc) => (
+                    <li key={doc._id} className="py-4">
+                        <Link
+                            to={`/editor/${doc._id}`}
+                            className="text-blue-600 hover:text-blue-800 font-medium text-lg"
+                        >
+                            {doc.title || 'Untitled Document'}
+                        </Link>
+                    </li>
+                ))}
+            </ul>
+        ) : (
+            <p className="text-gray-500 text-center">No documents found.</p>
+        )}
+    </div>
+</div>
+
   );
 };
 
