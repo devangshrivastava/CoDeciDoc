@@ -2,7 +2,7 @@
   "name": "peer",
   "version": "0.1.0",
   "private": true,
-  "proxy": "http://172.31.64.224:4444",
+  "proxy": "http://172.31.54.137:4444",
   "dependencies": {
     "@chakra-ui/react": "^2.8.2",
     "@codemirror/basic-setup": "^0.20.0",

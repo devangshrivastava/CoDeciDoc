@@ -6,7 +6,7 @@ import './App.css';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { iceServers, SOCKET_URL } from '../config/config';
-// import { createPeerConnection } from '../utils/peerConnetion';
+import useSocket from '../hooks/useSocket';
 
 
 function Editor() {
@@ -35,80 +35,6 @@ function Editor() {
 
   // Prevent further execution if user is not yet loaded
 
-  
-  
-  const connectSocketIO = useCallback(() => {
-    if (!userEmail) return;
-    if(!collaborators) return;
-    // socketRef.current = io('http://172.31.104.87:4444');
-    socketRef.current = io(SOCKET_URL);
-    
-    socketRef.current.on('connect', () => {
-      console.log('Socket.IO connected');
-      socketRef.current.emit('register', { userEmail });
-      setConnectionStatus('Connected');
-    });
-
-    socketRef.current.on('disconnect', () => {
-      console.log('Socket.IO disconnected');
-      setConnectionStatus('Disconnected');
-    });
-
-    socketRef.current.on('registerSuccess', () => {
-      console.log('Registration successful');
-      setConnectionStatus('Registered');
-    });
-
-    socketRef.current.on('offer', (message) => {
-
-      const { senderEmail} = message;
-      const isAuthorized =
-        userEmail === senderEmail || // Owner of the document
-        collaborators.some(collab => collab.email === senderEmail);
-
-        // if (!isAuthorized) {
-        //   socketRef.current.emit('authorizationError', {
-        //     message: 'Not an authorized user',
-        //     senderEmail: userEmail,
-        //     receiverEmail: senderEmail
-        //   });
-        //   console.log('User not authorized');
-        //   return;
-        // }
-
-      console.log(`Offer received from ${message.senderEmail}`);
-      setPeerEmail(message.senderEmail);
-      peerEmailRef.current = message.senderEmail;
-      handleOffer(message);
-      setCallInitiated(true);
-    });
-
-    socketRef.current.on('authorizationError', (message) => {
-      alert('You are not authorized to access this document');
-      console.error('Authorization error:', message.message);
-    });
-
-    socketRef.current.on('answer', (message) => {
-      console.log(`Answer received from ${message.senderEmail}`);
-      setPeerEmail(message.senderEmail);
-      handleAnswer(message);
-      setCallInitiated(true);
-    });
-
-    socketRef.current.on('candidate', (message) => {
-      console.log(`ICE candidate received from ${message.senderEmail}:`, JSON.stringify(message.candidate));
-      handleCandidate(message);
-    });
-
-    socketRef.current.on('errorMessage', (error) => {
-      console.error('Error from server:', error.message);
-    });
-
-    socketRef.current.on('connect_error', (error) => {
-      console.error('Socket.IO connection error:', error);
-    });
-  }, [userEmail]);
-
   const sendIceCandidate = useCallback((candidate) => {
     if (socketRef.current && socketRef.current.connected && peerEmailRef.current) {
       console.log('Sending ICE candidate:', JSON.stringify(candidate));
@@ -121,10 +47,7 @@ function Editor() {
       console.log('Queueing ICE candidate:', JSON.stringify(candidate));
       iceCandidatesQueue.current.push(candidate);
     }
-  }, [userEmail]);
-
-
-
+  }, [socketRef, userEmail]);
 
   const createPeerConnection = useCallback(() => {
     console.log('Creating peer connection');
@@ -179,6 +102,73 @@ function Editor() {
 
     return pc;
   }, [sendIceCandidate]);
+
+  const handleOffer = useCallback(({ offer, senderEmail }) => {
+    setPeerEmail(senderEmail);
+    peerEmailRef.current = senderEmail;
+    const pc = createPeerConnection();
+
+    pc.ondatachannel = (event) => {
+      dataChannelRef.current = event.channel;
+      setupDataChannelEvents();
+    };
+
+    pc.setRemoteDescription(new RTCSessionDescription(offer))
+      .then(() => pc.createAnswer())
+      .then((answer) => pc.setLocalDescription(answer))
+      .then(() => {
+        socketRef.current.emit('answer', {
+          answer: pc.localDescription,
+          senderEmail: userEmail,
+          receiverEmail: peerEmailRef.current
+        });
+      })
+      .catch((error) => console.error('Error during offer handling:', error));
+  }, [createPeerConnection, userEmail, socketRef]);
+
+
+  const handleAnswer = useCallback(({ answer }) => {
+    const pc = peerConnectionRef.current;
+    pc.setRemoteDescription(new RTCSessionDescription(answer))
+      .then(() => {
+        console.log('Remote description set successfully (answer)');
+      })
+      .catch((error) => console.error('Error setting remote description:', error));
+  }, []);
+
+
+  const handleCandidate = useCallback(({ candidate }) => {
+    const pc = peerConnectionRef.current;
+    if (pc) {
+      pc.addIceCandidate(new RTCIceCandidate(candidate))
+        .then(() => console.log('ICE candidate added successfully'))
+        .catch((error) => console.error('Error adding ICE candidate:', error));
+    } else {
+      console.log('Queueing ICE candidate');
+      iceCandidatesQueue.current.push(candidate);
+    }
+  }, []);
+
+
+  const { connectSocketIO } = useSocket({
+    userEmail: userEmail,
+    handleOffer: handleOffer,
+    handleAnswer: handleAnswer,
+    handleCandidate: handleCandidate,
+    setConnectionStatus: setConnectionStatus,
+    setPeerEmail: setPeerEmail,
+    peerEmailRef: peerEmailRef,
+    setCallInitiated: setCallInitiated,
+    socketRef: socketRef
+  });
+
+
+  
+
+
+
+
+  
 
   const setupDataChannelEvents = () => {
     if (!dataChannelRef.current) return;
@@ -277,49 +267,9 @@ function Editor() {
     }
   };
 
-  const handleOffer = useCallback(({ offer, senderEmail }) => {
-    setPeerEmail(senderEmail);
-    peerEmailRef.current = senderEmail;
-    const pc = createPeerConnection();
+  
 
-    pc.ondatachannel = (event) => {
-      dataChannelRef.current = event.channel;
-      setupDataChannelEvents();
-    };
-
-    pc.setRemoteDescription(new RTCSessionDescription(offer))
-      .then(() => pc.createAnswer())
-      .then((answer) => pc.setLocalDescription(answer))
-      .then(() => {
-        socketRef.current.emit('answer', {
-          answer: pc.localDescription,
-          senderEmail: userEmail,
-          receiverEmail: peerEmailRef.current
-        });
-      })
-      .catch((error) => console.error('Error during offer handling:', error));
-  }, [createPeerConnection, userEmail]);
-
-  const handleAnswer = useCallback(({ answer }) => {
-    const pc = peerConnectionRef.current;
-    pc.setRemoteDescription(new RTCSessionDescription(answer))
-      .then(() => {
-        console.log('Remote description set successfully (answer)');
-      })
-      .catch((error) => console.error('Error setting remote description:', error));
-  }, []);
-
-  const handleCandidate = useCallback(({ candidate }) => {
-    const pc = peerConnectionRef.current;
-    if (pc) {
-      pc.addIceCandidate(new RTCIceCandidate(candidate))
-        .then(() => console.log('ICE candidate added successfully'))
-        .catch((error) => console.error('Error adding ICE candidate:', error));
-    } else {
-      console.log('Queueing ICE candidate');
-      iceCandidatesQueue.current.push(candidate);
-    }
-  }, []);
+  
 
   const callPeer = useCallback(() => {
     if (!peerEmail) {
@@ -347,7 +297,7 @@ function Editor() {
       .catch((error) => console.error('Error during call initiation:', error));
 
     setCallInitiated(true);
-  }, [createPeerConnection, userEmail, peerEmail]);
+  }, [createPeerConnection, userEmail, peerEmail, socketRef]);
 
   const handleTextChange = (e) => {
     const newText = e.target.value;
@@ -386,7 +336,7 @@ function Editor() {
       }
       ydocRef.current.destroy();
     };
-  }, [connectSocketIO]);
+  }, [connectSocketIO, socketRef]);
 
 
   useEffect(() => {
@@ -407,7 +357,7 @@ function Editor() {
       });
       iceCandidatesQueue.current = [];
     }
-  }, [userEmail]);
+  }, [userEmail, socketRef]);
 
 
   useEffect(() => {
