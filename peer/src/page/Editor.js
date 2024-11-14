@@ -1,12 +1,13 @@
 import { ChatState } from "../context/ChatProvider";
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import {setupDataChannelEvents} from '../utils/dataChannelUtils';
+
 import * as Y from 'yjs';
 import './App.css';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { iceServers } from '../config/config';
 import useSocket from '../hooks/useSocket';
+import {setupDataChannelEvents} from '../utils/dataChannelUtils';
 
 
 function Editor() {
@@ -14,12 +15,10 @@ function Editor() {
   const [connectionStatus, setConnectionStatus] = useState('Disconnected');
   const [callInitiated, setCallInitiated] = useState(false);
   const [text, setText] = useState('');
-
   const [collaborators, setCollaborators] = useState([]); // For listing current collaborators
   const [newCollaboratorEmail, setNewCollaboratorEmail] = useState(''); // For adding a new collaborator
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(''); // For showing save status messages
-
   const peerConnectionRef = useRef(null);
   const socketRef = useRef(null);
   const dataChannelRef = useRef(null);
@@ -31,9 +30,7 @@ function Editor() {
   const { user } = ChatState();
   const userEmail = user?.email;
   const { id } = useParams();
-
-
-  // Prevent further execution if user is not yet loaded
+  const syncManagerRef = useRef(null);
 
   const sendIceCandidate = useCallback((candidate) => {
     if (socketRef.current && socketRef.current.connected && peerEmailRef.current) {
@@ -126,7 +123,6 @@ function Editor() {
     iceCandidatesQueue: iceCandidatesQueue,
   });
 
-
   const handleSave = async () => {
     if (!text.trim()) {
       setSaveStatus('Nothing to save');
@@ -160,10 +156,6 @@ function Editor() {
     }
   };
 
-  
-
-  
-
   const callPeer = useCallback(() => {
     if (!peerEmail) {
       alert('Please enter a peer email');
@@ -192,13 +184,30 @@ function Editor() {
     setCallInitiated(true);
   }, [createPeerConnection, userEmail, peerEmail, socketRef]);
 
+  useEffect(() => {
+    let cleanup;
+    if (dataChannelRef.current) {
+      cleanup = setupDataChannelEvents({
+        dataChannelRef,
+        ydocRef,
+        ytextRef,
+        setText,
+      });
+      
+    }
+    return () => {
+      cleanup?.();
+    };
+  }, []);
+
   const handleTextChange = (e) => {
     const newText = e.target.value;
     setText(newText);
-    // if (ytextRef.current) {
-      ytextRef.current.delete(0, ytextRef.current.length);
-      ytextRef.current.insert(0, newText);
-    // }
+    ydocRef.current.transact(() => {
+      const ytext = ytextRef.current;
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, newText);
+    }, 'local');
   };
 
   useEffect(() => {
@@ -211,8 +220,6 @@ function Editor() {
     };
 
     ytextRef.current.observe(observer);
-
-    // Set up WebRTC connection
     connectSocketIO();
 
     return () => {
@@ -264,9 +271,16 @@ function Editor() {
         };  
 
         const { data } = await axios.get(`/api/document/${id}`, config); // Update the endpoint as needed
+
+        // const ytext = ytextRef.current;
+        // ytext.delete(0, ytext.length);  // Clear the current Yjs text content
+        // ytext.insert(0, data.content);
+
         setText(data.content);
         setCollaborators(data.collaborators);
         console.log('Collaborators:', data.collaborators);
+
+        
         
       } catch (error) {
         console.error('Error fetching collaborators:', error);
@@ -274,7 +288,7 @@ function Editor() {
     };
     
     fetchCollaborators();
-  }, [id, userEmail, user.token]);
+  }, [id, userEmail]);
 
   const addCollaborator = async () => {
     try {
@@ -305,80 +319,88 @@ function Editor() {
 
   return (
     <div className="app-container">
-      <div>Status: {connectionStatus}</div>
-      <div>Your Email: {userEmail}</div>
-      <div>
-        <input
-          value={peerEmail}
-          onChange={(e) => setPeerEmail(e.target.value)}
-          placeholder="Enter peer email"
-          className="peer-input"
-        />
-        <button 
-          onClick={callPeer} 
-          disabled={callInitiated} 
-          className="call-button"
-        >
-          Connect
-        </button>
-      </div>
+      {user ? (
+        <>
+          <div>Status: {connectionStatus}</div>
+          <div>Your Email: {userEmail}</div>
+          <div>
+            <input
+              value={peerEmail}
+              onChange={(e) => setPeerEmail(e.target.value)}
+              placeholder="Enter peer email"
+              className="peer-input"
+            />
+            <button onClick={callPeer} disabled={callInitiated} className="call-button">
+              Connect
+            </button>
+          </div>
 
-      <div className="editor-container" style={{ position: 'relative', marginTop: '20px' }}>
-        <textarea
-          value={text}
-          onChange={handleTextChange}
-          placeholder="Start typing..."
-          style={{ width: '100%', height: '300px', marginBottom: '10px' }}
-        />
-        
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <button
-            onClick={handleSave}
-            disabled={isSaving}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: isSaving ? '#ccc' : '#4CAF50',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: isSaving ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {isSaving ? 'Saving...' : 'Save Document'}
-          </button>
-          
-          {saveStatus && (
+          <div className="editor-container" style={{ position: 'relative', marginTop: '20px' }}>
+            <textarea
+              value={text}
+              onChange={handleTextChange}
+              placeholder="Start typing..."
+              style={{ width: '100%', height: '300px', marginBottom: '10px' }}
+            />
+
             <div
               style={{
-                marginLeft: '10px',
-                color: saveStatus.includes('Error') ? '#f44336' : '#4CAF50',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '20px',
               }}
             >
-              {saveStatus}
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: isSaving ? '#ccc' : '#4CAF50',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: isSaving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isSaving ? 'Saving...' : 'Save Document'}
+              </button>
+
+              {saveStatus && (
+                <div
+                  style={{
+                    marginLeft: '10px',
+                    color: saveStatus.includes('Error') ? '#f44336' : '#4CAF50',
+                  }}
+                >
+                  {saveStatus}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
 
-      {/* Collaborator Section */}
-      <div className="collaborator-section">
-        <h3>Shared With:</h3>
-        <ul>
-          {collaborators.map((collaborator) => (
-            <li key={collaborator.userId.toString()}>{collaborator.email}</li>
-          ))}
-        </ul>
+          {/* Collaborator Section */}
+          <div className="collaborator-section">
+            <h3>Shared With:</h3>
+            <ul>
+              {collaborators.map((collaborator) => (
+                <li key={collaborator.userId.toString()}>{collaborator.email}</li>
+              ))}
+            </ul>
 
-        <input
-          type="email"
-          value={newCollaboratorEmail}
-          onChange={(e) => setNewCollaboratorEmail(e.target.value)}
-          placeholder="Add collaborator email"
-        />
-        <button onClick={addCollaborator}>Add Collaborator</button>
-      </div>
+            <input
+              type="email"
+              value={newCollaboratorEmail}
+              onChange={(e) => setNewCollaboratorEmail(e.target.value)}
+              placeholder="Add collaborator email"
+            />
+            <button onClick={addCollaborator}>Add Collaborator</button>
+          </div>
+        </>
+      ) : (
+        <div>Loading...</div>
+      )}
     </div>
   );
 }
-
 export default Editor;

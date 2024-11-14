@@ -10,7 +10,7 @@ const SharedDocuments = () => {
 
   const userEmail = user?.email;
 
-  console.log(token);
+  // console.log();
   useEffect(() => {
     const fetchDocuments = async () => {
       if (!userEmail) return;
@@ -19,7 +19,7 @@ const SharedDocuments = () => {
         
         const config = {
           headers: {
-            Authorization: `Bearer ${user.token}`, // Include the token in the Authorization header
+            Authorization: `Bearer ${token}`, // Include the token in the Authorization header
           },
         };  
 
