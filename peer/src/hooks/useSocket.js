@@ -3,17 +3,23 @@
 import { useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { SOCKET_URL } from '../config/config';
+import { handleOffer, handleAnswer, handleCandidate } from '../handlers/socketHandlers';
 
 const useSocket = ({
-  userEmail,
-  handleOffer,
-  handleAnswer,
-  handleCandidate,
-  setConnectionStatus,
-  setPeerEmail,
-  peerEmailRef,
-  setCallInitiated,
-  socketRef,
+    userEmail,
+    setConnectionStatus,
+    setPeerEmail,
+    peerEmailRef,
+    setCallInitiated,
+    socketRef,
+    createPeerConnection,
+    dataChannelRef,
+    setupDataChannelEvents,
+    ydocRef,
+    ytextRef,
+    setText,
+    peerConnectionRef,
+    iceCandidatesQueue,
 }) => {
   
 
@@ -42,7 +48,21 @@ const useSocket = ({
         console.log(`Offer received from ${message.senderEmail}`);
         setPeerEmail(message.senderEmail);
         peerEmailRef.current = message.senderEmail;
-        handleOffer(message);
+        handleOffer({
+            offer: message.offer,
+            senderEmail: message.senderEmail,
+            setPeerEmail,
+            peerEmailRef,
+            createPeerConnection,
+            dataChannelRef,
+            setupDataChannelEvents,
+            ydocRef,
+            ytextRef,
+            setText,
+            socketRef,
+            userEmail,
+            
+          });
         setCallInitiated(true);
     });
 
@@ -54,13 +74,20 @@ const useSocket = ({
       socketRef.current.on('answer', (message) => {
         console.log(`Answer received from ${message.senderEmail}`);
         setPeerEmail(message.senderEmail);
-        handleAnswer(message);
+        handleAnswer({
+            answer: message.answer, 
+            peerConnectionRef
+        });
         setCallInitiated(true);
     });
 
     socketRef.current.on('candidate', (message) => {
       console.log(`ICE candidate received from ${message.senderEmail}:`, JSON.stringify(message.candidate));
-      handleCandidate(message);
+      handleCandidate({
+        candidate: message.candidate,
+        peerConnectionRef,
+        iceCandidatesQueue,
+      });
     });
 
     socketRef.current.on('errorMessage', (error) => {

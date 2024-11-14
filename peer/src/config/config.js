@@ -24,5 +24,5 @@ export const iceServers = [
     },
   ];
   
-  export const SOCKET_URL = 'http://172.31.54.137:4444';
+  export const SOCKET_URL = 'http://172.31.64.224:4444';
   
