@@ -1,14 +1,22 @@
 import { ChatState } from "../context/ChatProvider";
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-
 import * as Y from 'yjs';
 import './App.css';
+import 'quill/dist/quill.snow.css'; // Import Quill's Snow theme CSS
+
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { iceServers } from '../config/config';
 import useSocket from '../hooks/useSocket';
 import {setupDataChannelEvents} from '../utils/dataChannelUtils';
+import { IndexeddbPersistence } from 'y-indexeddb'
+import Quill from 'quill';
+import { QuillBinding } from 'y-quill';
+import QuillCursors from 'quill-cursors';
 
+
+
+Quill.register('modules/cursors', QuillCursors);
 
 function Editor() {
   const [peerEmail, setPeerEmail] = useState('');
@@ -23,14 +31,23 @@ function Editor() {
   const socketRef = useRef(null);
   const dataChannelRef = useRef(null);
   const iceCandidatesQueue = useRef([]);
+
+
   const ydocRef = useRef(new Y.Doc()); // Initialize Yjs document immediately
   const ytextRef = useRef(ydocRef.current.getText('shared')); // Shared text in Yjs
+
+  const quillInstanceRef = useRef(null); // Quill instance reference
+  const persistenceRef = useRef(null);
+
+
   const peerEmailRef = useRef('');
   const connectionTimeoutRef = useRef(null);
   const { user } = ChatState();
   const userEmail = user?.email;
   const { id } = useParams();
-  const syncManagerRef = useRef(null);
+  const [showCollaboratorForm, setShowCollaboratorForm] = useState(false);
+  
+  // const persistence = new IndexeddbPersistence(roomName, ydoc);
 
   const sendIceCandidate = useCallback((candidate) => {
     if (socketRef.current && socketRef.current.connected && peerEmailRef.current) {
@@ -184,6 +201,7 @@ function Editor() {
     setCallInitiated(true);
   }, [createPeerConnection, userEmail, peerEmail, socketRef]);
 
+
   useEffect(() => {
     let cleanup;
     if (dataChannelRef.current) {
@@ -199,16 +217,6 @@ function Editor() {
       cleanup?.();
     };
   }, []);
-
-  const handleTextChange = (e) => {
-    const newText = e.target.value;
-    setText(newText);
-    ydocRef.current.transact(() => {
-      const ytext = ytextRef.current;
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, newText);
-    }, 'local');
-  };
 
   useEffect(() => {
     // Initialize Yjs observers
@@ -235,6 +243,11 @@ function Editor() {
         socketRef.current.disconnect();
       }
       ydocRef.current.destroy();
+
+      if (persistenceRef.current) {
+        persistenceRef.current.destroy();
+      }
+
     };
   }, [connectSocketIO, socketRef]);
 
@@ -271,11 +284,6 @@ function Editor() {
         };  
 
         const { data } = await axios.get(`/api/document/${id}`, config); // Update the endpoint as needed
-
-        // const ytext = ytextRef.current;
-        // ytext.delete(0, ytext.length);  // Clear the current Yjs text content
-        // ytext.insert(0, data.content);
-
         setText(data.content);
         setCollaborators(data.collaborators);
         console.log('Collaborators:', data.collaborators);
@@ -289,6 +297,49 @@ function Editor() {
     
     fetchCollaborators();
   }, [id, userEmail]);
+
+
+
+  useEffect(() => {
+    if (!user || !id) return;
+
+    const editorElement = document.getElementById('quill-editor');
+    if (!editorElement) return;
+
+    // Initialize Quill editor
+    const quill = new Quill(editorElement, {
+      theme: 'snow',
+      modules: {
+        cursors: true, // Collaborative cursors
+        toolbar: [
+          [{ header: [1, 2, false] }],
+          ['bold', 'italic', 'underline'],
+          ['code-block', 'image']
+        ],
+        history: {
+          userOnly: true // Prevent undo-redo conflicts with remote users
+        }
+      },
+      placeholder: 'Start collaborating...'
+    });
+
+    quillInstanceRef.current = quill;
+
+    // Bind Yjs text to Quill using QuillBinding
+    const binding = new QuillBinding(ytextRef.current, quill);
+
+    // IndexedDB Persistence for local storage
+    persistenceRef.current = new IndexeddbPersistence('y-quill-doc', ydocRef.current);
+    return () => {
+      // Cleanup
+      binding.destroy();
+      persistenceRef.current.destroy();
+      ydocRef.current.destroy();
+    };
+  }, [id, user]); 
+
+  
+  
 
   const addCollaborator = async () => {
     try {
@@ -317,90 +368,125 @@ function Editor() {
     return <div>Loading...</div>; // Show loading indicator only in the render phase
   }
 
+ 
+
+
   return (
-    <div className="app-container">
-      {user ? (
-        <>
-          <div>Status: {connectionStatus}</div>
-          <div>Your Email: {userEmail}</div>
-          <div>
-            <input
-              value={peerEmail}
-              onChange={(e) => setPeerEmail(e.target.value)}
-              placeholder="Enter peer email"
-              className="peer-input"
-            />
-            <button onClick={callPeer} disabled={callInitiated} className="call-button">
-              Connect
-            </button>
-          </div>
+    <div className="app-container bg-gray-50 min-h-screen flex flex-col items-center py-10 px-4 sm:px-8 font-sans">
+  {user ? (
+    <>
+      {/* Status Section */}
+      <div className="w-full max-w-xs mb-8">
+  {/* Status Display */}
+  <div className="flex items-center justify-center border-2 border-blue-300 bg-blue-100 text-blue-900 font-medium px-6 py-3 rounded-lg shadow-md mb-4">
+    <span className="text-lg font-bold pr-2">Status:</span>
+    <span>{connectionStatus}</span>
+  </div>
 
-          <div className="editor-container" style={{ position: 'relative', marginTop: '20px' }}>
-            <textarea
-              value={text}
-              onChange={handleTextChange}
-              placeholder="Start typing..."
-              style={{ width: '100%', height: '300px', marginBottom: '10px' }}
-            />
+  {/* Peer Email Input and Connect Button */}
+  <div className="flex flex-col space-y-4">
+    <input
+      value={peerEmail}
+      onChange={(e) => setPeerEmail(e.target.value)}
+      placeholder="Enter peer email"
+      className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-300 transition"
+    />
+    <button
+      onClick={callPeer}
+      disabled={callInitiated}
+      className={`w-full py-2 rounded-lg font-semibold text-white transition ${
+        callInitiated ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'
+      }`}
+    >
+      Connect
+    </button>
+  </div>
+</div>
 
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '20px',
-              }}
+
+      {/* Main Content: Editor and Collaborators */}
+      <div className="w-full max-w-6xl grid grid-cols-1 md:grid-cols-3 gap-8">
+        {/* Editor Section */}
+        <div className="editor-container col-span-2 bg-white rounded-3xl shadow-xl p-8 border-2 border-blue-200">
+          <h3
+            className=" mb-6 text-3xl sm:text-4xl font-extrabold text-gray-900 bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent text-center sm:text-left"
+          >
+            Editor
+          </h3>
+          <div id="quill-editor" className="quill-editor"></div>
+          <div className="flex justify-between items-center">
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className={`px-8 py-3 rounded-lg text-white font-semibold text-lg transition ${
+                isSaving
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-700 shadow-lg'
+              }`}
             >
-              <button
-                onClick={handleSave}
-                disabled={isSaving}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: isSaving ? '#ccc' : '#4CAF50',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: isSaving ? 'not-allowed' : 'pointer',
-                }}
+              {isSaving ? 'Saving...' : 'Save Document'}
+            </button>
+            {saveStatus && (
+              <div
+                className={`text-sm font-medium ${
+                  saveStatus.includes('Error') ? 'text-red-500' : 'text-blue-600'
+                }`}
               >
-                {isSaving ? 'Saving...' : 'Save Document'}
+                {saveStatus}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Collaborator Section */}
+        <div className="collaborator-section bg-white rounded-3xl shadow-xl p-6">
+          <h3
+            className="mb-4 text-2xl  font-extrabold text-gray-900 bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent text-center sm:text-left"
+          >
+            Shared With
+          </h3>
+          <ul className="list-disc list-inside space-y-4 mb-6 text-gray-700">
+            {collaborators.map((collaborator) => (
+              <li key={collaborator.userId.toString()} className="text-gray-600">
+                {collaborator.email}
+              </li>
+            ))}
+          </ul>
+          <button
+            onClick={() => setShowCollaboratorForm((prev) => !prev)}
+            className="px-6 py-3 w-full rounded-lg text-white font-semibold bg-blue-600 hover:bg-blue-700 shadow-lg transition"
+          >
+            {showCollaboratorForm ? 'Close Form' : 'Add Collaborator'}
+          </button>
+
+          {/* Add Collaborator Form */}
+          {showCollaboratorForm && (
+            <div className="mt-6">
+              <input
+                type="email"
+                value={newCollaboratorEmail}
+                onChange={(e) => setNewCollaboratorEmail(e.target.value)}
+                placeholder="Collaborator email"
+                className="w-full px-4 py-3 border border-blue-300 rounded-lg shadow-sm focus:ring focus:ring-blue-300 focus:outline-none mb-4"
+              />
+              <button
+                onClick={addCollaborator}
+                className="px-6 py-3 w-full rounded-lg text-white font-semibold bg-blue-600 hover:bg-blue-700 shadow-lg transition"
+              >
+                Submit
               </button>
-
-              {saveStatus && (
-                <div
-                  style={{
-                    marginLeft: '10px',
-                    color: saveStatus.includes('Error') ? '#f44336' : '#4CAF50',
-                  }}
-                >
-                  {saveStatus}
-                </div>
-              )}
             </div>
-          </div>
+          )}
+        </div>
+      </div>
+    </>
+  ) : (
+    <div className="text-center text-gray-700 text-lg font-medium">Loading...</div>
+  )}
+</div>
 
-          {/* Collaborator Section */}
-          <div className="collaborator-section">
-            <h3>Shared With:</h3>
-            <ul>
-              {collaborators.map((collaborator) => (
-                <li key={collaborator.userId.toString()}>{collaborator.email}</li>
-              ))}
-            </ul>
 
-            <input
-              type="email"
-              value={newCollaboratorEmail}
-              onChange={(e) => setNewCollaboratorEmail(e.target.value)}
-              placeholder="Add collaborator email"
-            />
-            <button onClick={addCollaborator}>Add Collaborator</button>
-          </div>
-        </>
-      ) : (
-        <div>Loading...</div>
-      )}
-    </div>
+
   );
 }
 export default Editor;

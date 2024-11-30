@@ -1,0 +1,16 @@
+.editor-container {
+    max-width: 800px;
+    margin: 20px auto;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: #f9f9f9;
+  }
+  
+  .quill-editor {
+    height: 400px; /* Ensure a visible height for the editor */
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
+  }
+  
