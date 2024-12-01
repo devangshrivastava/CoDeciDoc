@@ -106,11 +106,11 @@ Feel free to open issues or submit pull requests to enhance the project. Contrib
 
 --- 
 
-## 📄 License
+<!-- ## 📄 License
 
 This project is licensed under the *MIT License*. You are free to use, modify, and distribute this software under the terms of the license. See the [LICENSE](LICENSE) file for more details.
 
----
+--- -->
 
 ## 📧 Contact
 
