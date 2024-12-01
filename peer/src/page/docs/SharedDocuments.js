@@ -59,6 +59,8 @@ const SharedDocuments = () => {
                     >
                         <Link
                             to={`/editor/${doc._id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="text-blue-600 hover:text-blue-800 font-semibold text-lg sm:text-xl transition-all duration-300 group-hover:underline truncate"
                         >
                             {doc.title || 'Untitled Document'}

@@ -8,7 +8,6 @@ export const handleOffer = async ({
     setupDataChannelEvents,
     ydocRef,
     ytextRef,
-    setText,
     socketRef,
     userEmail,
   }) => {
@@ -23,7 +22,6 @@ export const handleOffer = async ({
           dataChannelRef,
           ydocRef,
           ytextRef,
-          setText,
         });
       };
   

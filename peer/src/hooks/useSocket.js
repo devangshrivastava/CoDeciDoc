@@ -17,7 +17,6 @@ const useSocket = ({
     setupDataChannelEvents,
     ydocRef,
     ytextRef,
-    setText,
     peerConnectionRef,
     iceCandidatesQueue,
 }) => {
@@ -58,7 +57,6 @@ const useSocket = ({
             setupDataChannelEvents,
             ydocRef,
             ytextRef,
-            setText,
             socketRef,
             userEmail,
             

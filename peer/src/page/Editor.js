@@ -3,7 +3,6 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import * as Y from 'yjs';
 import './App.css';
 import 'quill/dist/quill.snow.css'; // Import Quill's Snow theme CSS
-
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { iceServers } from '../config/config';
@@ -22,7 +21,6 @@ function Editor() {
   const [peerEmail, setPeerEmail] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('Disconnected');
   const [callInitiated, setCallInitiated] = useState(false);
-  const [text, setText] = useState('');
   const [collaborators, setCollaborators] = useState([]); // For listing current collaborators
   const [newCollaboratorEmail, setNewCollaboratorEmail] = useState(''); // For adding a new collaborator
   const [isSaving, setIsSaving] = useState(false);
@@ -32,13 +30,11 @@ function Editor() {
   const dataChannelRef = useRef(null);
   const iceCandidatesQueue = useRef([]);
 
-
   const ydocRef = useRef(new Y.Doc()); // Initialize Yjs document immediately
   const ytextRef = useRef(ydocRef.current.getText('shared')); // Shared text in Yjs
 
   const quillInstanceRef = useRef(null); // Quill instance reference
   const persistenceRef = useRef(null);
-
 
   const peerEmailRef = useRef('');
   const connectionTimeoutRef = useRef(null);
@@ -47,6 +43,9 @@ function Editor() {
   const { id } = useParams();
   const [showCollaboratorForm, setShowCollaboratorForm] = useState(false);
   
+  const peerConnections = new Map(); // Map of peerEmail -> RTCPeerConnection
+  const dataChannels = new Map(); // Map of peerEmail -> DataChannel
+
   // const persistence = new IndexeddbPersistence(roomName, ydoc);
 
   const sendIceCandidate = useCallback((candidate) => {
@@ -108,7 +107,6 @@ function Editor() {
       dataChannelRef,
       ydocRef,
       ytextRef,
-      setText,
     });
 
     peerConnectionRef.current = pc;
@@ -135,17 +133,16 @@ function Editor() {
     setupDataChannelEvents: setupDataChannelEvents,
     ydocRef: ydocRef,
     ytextRef: ytextRef,
-    setText: setText,
     peerConnectionRef: peerConnectionRef,
     iceCandidatesQueue: iceCandidatesQueue,
   });
 
   const handleSave = async () => {
-    if (!text.trim()) {
-      setSaveStatus('Nothing to save');
-      setTimeout(() => setSaveStatus(''), 3000);
-      return;
-    }
+    // if (!text.trim()) {
+    //   setSaveStatus('Nothing to save');
+    //   setTimeout(() => setSaveStatus(''), 3000);
+    //   return;
+    // }
 
     setIsSaving(true);
     setSaveStatus('Saving...');
@@ -159,7 +156,7 @@ function Editor() {
       };
 
       await axios.put(`/api/document/${id}`, {
-        content: text
+        content: ytextRef.current.toString(),
       }, config);
 
       setSaveStatus('Saved successfully!');
@@ -209,7 +206,6 @@ function Editor() {
         dataChannelRef,
         ydocRef,
         ytextRef,
-        setText,
       });
       
     }
@@ -222,9 +218,6 @@ function Editor() {
     // Initialize Yjs observers
     const observer = () => {
       const newText = ytextRef.current.toString();
-      if (text !== newText) {
-        setText(newText);
-      }
     };
 
     ytextRef.current.observe(observer);
@@ -284,11 +277,7 @@ function Editor() {
         };  
 
         const { data } = await axios.get(`/api/document/${id}`, config); // Update the endpoint as needed
-        setText(data.content);
         setCollaborators(data.collaborators);
-        console.log('Collaborators:', data.collaborators);
-
-        
         
       } catch (error) {
         console.error('Error fetching collaborators:', error);
@@ -414,6 +403,8 @@ function Editor() {
             Editor
           </h3>
           <div id="quill-editor" className="quill-editor"></div>
+
+
           <div className="flex justify-between items-center">
             <button
               onClick={handleSave}

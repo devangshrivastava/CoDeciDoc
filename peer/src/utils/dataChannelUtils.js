@@ -1,7 +1,7 @@
 // dataChannelUtils.js
 import * as Y from 'yjs';
 import { debounce } from 'lodash';
-import { IndexeddbPersistence } from 'y-indexeddb';
+
 
 const SYNC_MESSAGE_TYPES = {
   SYNC_STEP1: 'sync-step1',
@@ -10,10 +10,9 @@ const SYNC_MESSAGE_TYPES = {
 };
 
 export class YjsSyncManager {
-  constructor({ ydoc, dataChannel, setText }) {
+  constructor({ ydoc, dataChannel }) {
     this.ydoc = ydoc;
     this.dataChannel = dataChannel;
-    this.setText = setText;
     this.ytext = ydoc.getText('shared');
     this.isReady = false;
     this.pendingUpdates = [];
@@ -38,7 +37,6 @@ export class YjsSyncManager {
       this.ytext.observe(event => {
         if (event.transaction.origin !== 'remote') {
           this.ydoc.transact(() => {
-            // this.setText(this.ytext.toString());
           }, 'local');
         }
       });
@@ -176,7 +174,6 @@ export class YjsSyncManager {
 export const setupDataChannelEvents = ({
   dataChannelRef,
   ydocRef,
-  setText,
 }) => {
   let syncManager = null;
 
@@ -185,7 +182,6 @@ export const setupDataChannelEvents = ({
       syncManager = new YjsSyncManager({
         ydoc: ydocRef.current,
         dataChannel: dataChannelRef.current,
-        setText
       });
       syncManager.initialize();
     } catch (error) {

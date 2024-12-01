@@ -5,7 +5,6 @@ import { ChatState } from '../../context/ChatProvider';
 
 const MyDocuments = () => {
   const [documents, setDocuments] = useState([]);
-  // const [loading, setLoading] = useState(true);
   const { token, user } = ChatState(); 
 
   const userEmail = user?.email;
@@ -16,7 +15,7 @@ const MyDocuments = () => {
       if (!userEmail) return;
       try {
 
-        
+     
         const config = {
           headers: {
             Authorization: `Bearer ${user.token}`, // Include the token in the Authorization header
@@ -58,6 +57,8 @@ const MyDocuments = () => {
                     >
                         <Link
                             to={`/editor/${doc._id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="text-blue-600 hover:text-blue-800 font-semibold text-lg sm:text-xl transition-all duration-300 group-hover:underline"
                         >
                             {doc.title || 'Untitled Document'}
